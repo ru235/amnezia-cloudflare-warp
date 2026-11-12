@@ -339,9 +339,9 @@ systemctl enable --now peer-monitor.timer >/dev/null
 systemctl enable --now warp-daily-report.timer >/dev/null
 systemctl enable --now warp-rotate.timer >/dev/null
 
-if [ "$TELEGRAM" -eq 1 ] && [ "$BOT_ROLE" != "none" ]; then
+if [ "$TELEGRAM" -eq 1 ] && [ "$BOT_ROLE" = "active" ]; then
     systemctl enable --now warp-bot.service >/dev/null
-    ok "bot started (role: $BOT_ROLE)"
+    ok "bot started (role: active)"
 else
     systemctl disable --now warp-bot.service >/dev/null 2>&1 || true
 fi
@@ -383,7 +383,7 @@ echo "  status      : systemctl list-timers 'peer-monitor*' 'warp-*' 'bot-guard*
 echo "  monitor log : tail -f /var/log/syslog | grep peer-monitor"
 echo "  data        : /var/lib/warp-monitor/history.csv"
 echo "  config      : $CONF_PATH"
-if [ "$TELEGRAM" -eq 1 ]; then
+if [ "$TELEGRAM" -eq 1 ] && [ "$BOT_ROLE" = "active" ]; then
     echo "  bot         : send /start in Telegram"
 fi
 echo
