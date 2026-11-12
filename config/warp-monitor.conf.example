@@ -1,0 +1,52 @@
+# /etc/warp-monitor.conf
+# Main configuration for amnezia-cloudflare-warp.
+#
+# Every key is a plain shell variable: the scripts source this file.
+# Values in quotes. Copy this file to /etc/warp-monitor.conf and edit.
+
+# --- this server --------------------------------------------------------------
+SELF_NAME="Helsinki"
+# Leave empty to auto-detect from the default route.
+SELF_IP="203.0.113.10"
+
+# --- peer server (optional) ---------------------------------------------------
+# Leave both empty for a single-server setup. When set, the monitor checks the
+# peer over TCP/22, the report shows its card and the bot can query it over SSH.
+PEER_NAME="Aeza"
+PEER_IP="192.0.2.20"
+
+# --- server list for the Telegram bot ----------------------------------------
+# Usually SERVER1 = this server and SERVER2 = the peer. The bot can also work
+# with a single entry.
+SERVER1_NAME="Helsinki"
+SERVER1_IP="203.0.113.10"
+SERVER2_NAME="Aeza"
+SERVER2_IP="192.0.2.20"
+
+# --- schedule ----------------------------------------------------------------
+# REPORT_TIME is a display label printed in the report header.
+REPORT_TIME="08:00 MSK"
+# UTC times used by the systemd timers.
+REPORT_UTC="05:00"
+ROTATE_UTC="04:45"
+# Labels shown by the bot.
+ROTATE_S1="04:30 UTC"
+ROTATE_S2="04:45 UTC"
+
+# --- bot ---------------------------------------------------------------------
+# active  - the bot runs on this server
+# passive - the bot runs only while the peer is unreachable (bot-guard)
+# none    - no bot at all
+BOT_ROLE="active"
+
+# --- routing -----------------------------------------------------------------
+# Mark used for traffic that must bypass WARP (SSH, Caddy, AWG transport).
+BYPASS_MARK="0x100cf"
+# ip rule priority. WARP installs its own rule at priority 99, so this must be
+# lower (evaluated first).
+BYPASS_PRIO="10"
+WARP_IF="CloudflareWARP"
+# AmneziaWG host interface (inside the container it is awg0; on the host amn0).
+AWG_IFACE="amn0"
+# Leave empty to auto-detect from the container.
+AWG_PORT=""

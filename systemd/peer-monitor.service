@@ -1,0 +1,10 @@
+[Unit]
+Description=Monitor peer server and local WARP/Amnezia health
+After=network-online.target warp-svc.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/peer-monitor.sh
+Nice=10
+TimeoutStartSec=120

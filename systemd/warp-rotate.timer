@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Cloudflare WARP reconnect daily
+
+[Timer]
+OnCalendar=*-*-* __ROTATE_UTC__:00
+Persistent=true
+RandomizedDelaySec=300
+Unit=warp-rotate.service
+
+[Install]
+WantedBy=timers.target

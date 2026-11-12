@@ -1,0 +1,15 @@
+[Unit]
+Description=Telegram VPN control bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/sbin/warp-bot.py
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

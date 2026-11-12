@@ -1,0 +1,31 @@
+# Secrets and local settings
+.env
+*.env
+!.env.example
+!config/*.example
+
+# Runtime data
+*.log
+report-*.png
+history.csv
+state.env
+ipv4.log
+last_warp4
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temporary
+*.tmp
+*.bak

@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily report with dashboard
+After=network-online.target warp-svc.service peer-monitor.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/warp-daily-report.py
+TimeoutStartSec=300
+Nice=10

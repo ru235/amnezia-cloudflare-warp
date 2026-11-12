@@ -1,0 +1,9 @@
+[Unit]
+Description=Start/stop the Telegram bot depending on peer availability
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/bot-guard.sh
+Nice=10

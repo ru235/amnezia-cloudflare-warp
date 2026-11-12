@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily Cloudflare WARP reconnect (IPv6 rotation)
+After=warp-svc.service warp-amnezia-routing.service
+Requires=warp-svc.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/warp-rotate.sh
+TimeoutStartSec=300
+Nice=10

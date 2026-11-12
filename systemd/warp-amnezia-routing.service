@@ -1,0 +1,16 @@
+[Unit]
+Description=Cloudflare WARP routing for Amnezia/Docker
+After=warp-svc.service docker.service network-online.target
+Wants=network-online.target
+Requires=warp-svc.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/warp-amnezia-routing.sh
+RemainAfterExit=yes
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

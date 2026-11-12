@@ -1,0 +1,11 @@
+[Unit]
+Description=Check passive bot role every minute
+
+[Timer]
+OnBootSec=90
+OnUnitActiveSec=60
+AccuracySec=5
+Unit=bot-guard.service
+
+[Install]
+WantedBy=timers.target

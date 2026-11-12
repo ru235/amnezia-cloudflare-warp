@@ -1,0 +1,10 @@
+[Unit]
+Description=Build the daily VPN report
+
+[Timer]
+OnCalendar=*-*-* __REPORT_UTC__:00
+Persistent=true
+Unit=warp-daily-report.service
+
+[Install]
+WantedBy=timers.target
