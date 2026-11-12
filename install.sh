@@ -43,6 +43,8 @@ Schedule (UTC):
   --report-utc HH:MM      Daily report time (default: 05:00)
   --rotate-utc HH:MM      Daily WARP key rotation (default: 04:45)
   --report-label TEXT     Label in the report header (default: "<time> UTC")
+  --rotate-s1-label TEXT  Rotation label for the first server in the bot
+  --rotate-s2-label TEXT  Rotation label for the second server in the bot
 
 Advanced:
   --awg-port PORT         AmneziaWG UDP port (default: auto-detect)
@@ -101,7 +103,8 @@ BYPASS_PRIO="${BYPASS_PRIO:-10}"
 WARP_IF="${WARP_IF:-CloudflareWARP}"
 AWG_IFACE="${AWG_IFACE:-amn0}"
 AWG_PORT="${AWG_PORT:-}"
-ROTATE_LABEL="${ROTATE_S1:-$ROTATE_UTC UTC}"
+ROTATE_LABEL_S1="${ROTATE_S1:-}"
+ROTATE_LABEL_S2="${ROTATE_S2:-}"
 
 # --- arguments ---------------------------------------------------------------
 while [ $# -gt 0 ]; do
@@ -116,7 +119,9 @@ while [ $# -gt 0 ]; do
         --bot-role)       BOT_ROLE="$2"; shift 2 ;;
         --no-bot)         BOT_ROLE="none"; shift ;;
         --report-utc)     REPORT_UTC="$2"; REPORT_LABEL="$2 UTC"; shift 2 ;;
-        --rotate-utc)     ROTATE_UTC="$2"; ROTATE_LABEL="$2 UTC"; shift 2 ;;
+        --rotate-utc)     ROTATE_UTC="$2"; shift 2 ;;
+        --rotate-s1-label) ROTATE_LABEL_S1="$2"; shift 2 ;;
+        --rotate-s2-label) ROTATE_LABEL_S2="$2"; shift 2 ;;
         --report-label)   REPORT_LABEL="$2"; shift 2 ;;
         --awg-port)       AWG_PORT="$2"; shift 2 ;;
         --bypass-mark)    BYPASS_MARK="$2"; shift 2 ;;
@@ -150,7 +155,8 @@ sanitize() { printf '%s' "$1" | tr -d '"\\`$' ; }
 SELF_NAME="$(sanitize "$SELF_NAME")"
 PEER_NAME="$(sanitize "$PEER_NAME")"
 REPORT_LABEL="$(sanitize "$REPORT_LABEL")"
-ROTATE_LABEL="$(sanitize "$ROTATE_LABEL")"
+ROTATE_LABEL_S1="$(sanitize "${ROTATE_LABEL_S1:-$ROTATE_UTC UTC}")"
+ROTATE_LABEL_S2="$(sanitize "${ROTATE_LABEL_S2:-$ROTATE_UTC UTC}")"
 
 # --- dependencies ------------------------------------------------------------
 need_pkgs=()
@@ -273,8 +279,8 @@ SERVER2_IP="${SERVER2_IP:-$PEER_IP}"
 REPORT_TIME="$REPORT_LABEL"
 REPORT_UTC="$REPORT_UTC"
 ROTATE_UTC="$ROTATE_UTC"
-ROTATE_S1="$ROTATE_LABEL"
-ROTATE_S2="$ROTATE_LABEL"
+ROTATE_S1="$ROTATE_LABEL_S1"
+ROTATE_S2="$ROTATE_LABEL_S2"
 
 BOT_ROLE="$BOT_ROLE"
 
