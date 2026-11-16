@@ -752,11 +752,13 @@ def handle_message(msg):
         send("🛡 Проверяю ТСПУ…")
         send(tspu_text(), back_kb())
     elif cmd == "/switch":
-        send("🔄 Переключаю основной сервер…")
+        sent = send("🔄 Переключаю основной сервер…")
+        mid = (sent.get("result") or {}).get("message_id")
         was_active = (BOT_ROLE == "active")
         confirm_current_update()
         res = switch_primary()
-        send(res, main_kb())
+        if not mid or not edit(mid, res, main_kb()).get("ok"):
+            send(res, main_kb())
         if was_active and res.startswith("✅"):
             retire_after_switch()
     elif cmd == "/report":
