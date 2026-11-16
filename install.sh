@@ -93,6 +93,8 @@ TSPU_PROBE_KEY="/root/.ssh/id_ed25519_monitor"
 TSPU_DPI_HOP=""
 TSPU_CACHE_TTL="600"
 TSPU_TIMEOUT="180"
+TSPU_REMOTE=""
+TSPU_REMOTE_MAX_AGE="21600"
 TSPU_INSTALL=1
 INSTALL_DEPS=0
 DRY_RUN=0
@@ -128,6 +130,8 @@ TSPU_PROBE_KEY="${TSPU_PROBE_KEY:-/root/.ssh/id_ed25519_monitor}"
 TSPU_DPI_HOP="${TSPU_DPI_HOP:-}"
 TSPU_CACHE_TTL="${TSPU_CACHE_TTL:-600}"
 TSPU_TIMEOUT="${TSPU_TIMEOUT:-180}"
+TSPU_REMOTE="${TSPU_REMOTE:-0}"
+TSPU_REMOTE_MAX_AGE="${TSPU_REMOTE_MAX_AGE:-21600}"
 
 # --- arguments ---------------------------------------------------------------
 while [ $# -gt 0 ]; do
@@ -334,6 +338,8 @@ TSPU_PROBE_KEY="$TSPU_PROBE_KEY"
 TSPU_DPI_HOP="$TSPU_DPI_HOP"
 TSPU_CACHE_TTL="$TSPU_CACHE_TTL"
 TSPU_TIMEOUT="$TSPU_TIMEOUT"
+TSPU_REMOTE="$TSPU_REMOTE"
+TSPU_REMOTE_MAX_AGE="$TSPU_REMOTE_MAX_AGE"
 EOF
 chmod 644 "$CONF_PATH"
 ok "config written"
@@ -348,6 +354,7 @@ install -m 755 "$REPO_DIR/scripts/bot-guard.sh"            "$BIN_DIR/bot-guard.s
 install -m 755 "$REPO_DIR/scripts/warp-daily-report.py"    "$BIN_DIR/warp-daily-report.py"
 install -m 755 "$REPO_DIR/scripts/warp-bot.py"             "$BIN_DIR/warp-bot.py"
 install -m 755 "$REPO_DIR/scripts/tspu-check.sh"           "$BIN_DIR/tspu-check.sh"
+install -m 755 "$REPO_DIR/scripts/tspu-ingest.sh"          "$BIN_DIR/tspu-ingest.sh"
 ok "scripts installed"
 
 # --- TSPU checker -------------------------------------------------------------

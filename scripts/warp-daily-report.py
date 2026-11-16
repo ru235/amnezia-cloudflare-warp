@@ -598,11 +598,17 @@ def tspu_status(cfg):
     hop = data.get("dpi_hop")
     if hop not in (None, 0, "0"):
         meta.append(f"DPI hop {hop}")
+    if data.get("remote"):
+        try:
+            age = max(0, int(time.time()) - int(data.get("ts") or 0))
+            meta.append(f"проверено {human_age(age)} назад")
+        except (TypeError, ValueError):
+            pass
     if meta:
         lines.append(f"<i>{'; '.join(meta)}</i>")
     if unknown_reason:
         lines.append(f"<i>{unknown_reason}</i>")
-    elif not cfg.get("TSPU_PROBE_HOST"):
+    elif not data.get("remote") and not cfg.get("TSPU_PROBE_HOST"):
         lines.append("<i>Локальная проверка: российский ТСПУ виден только из сети РФ.</i>")
     return "\n".join(lines)
 

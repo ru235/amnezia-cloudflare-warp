@@ -67,3 +67,8 @@ TSPU_PROBE_KEY="/root/.ssh/id_ed25519_monitor"
 TSPU_DPI_HOP=""
 TSPU_CACHE_TTL="600"
 TSPU_TIMEOUT="180"
+# Results pushed by a host inside Russia (see probe/README.md). When enabled,
+# the pushed data is preferred over a local check.
+TSPU_REMOTE="0"
+# How long a pushed result stays valid, seconds (4h timer + margin).
+TSPU_REMOTE_MAX_AGE="21600"

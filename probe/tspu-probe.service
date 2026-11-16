@@ -1,0 +1,27 @@
+[Unit]
+Description=TSPU block probe for the VPN servers
+Documentation=https://github.com/ru235/amnezia-cloudflare-warp
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/tspu-probe.sh
+# The upstream checker insists on uid 0 for its raw ICMP socket, so the
+# process stays root but is boxed in: no writes outside /tmp and /run,
+# no new capabilities beyond what it already has, IPv4/IPv6 only.
+ProtectSystem=strict
+ProtectHome=read-only
+# ssh keeps its known_hosts here; everything else under /root stays read-only.
+ReadWritePaths=/root/.ssh
+PrivateTmp=yes
+PrivateDevices=no
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+LockPersonality=yes
+NoNewPrivileges=yes
+Nice=15
+IOSchedulingClass=idle

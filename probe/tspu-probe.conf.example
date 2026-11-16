@@ -1,0 +1,19 @@
+# Settings for the TSPU probe running on a Russian host behind TSPU.
+# Edit this file and nothing else: the IPs may also come from the server.
+
+# Where to push results: the monitored servers (space-separated). Each one only
+# accepts `targets` and `push` for this key.
+PROBE_SERVER="root@5.144.179.124 root@213.21.246.122"
+PROBE_PORT="22"
+PROBE_KEY="/root/.ssh/id_ed25519_tspu"
+
+# How the result is labelled in reports and the bot.
+PROBE_LABEL="ТСПУ (Москва)"
+
+# Empty = ask the server for the current VPN IPs on every run (recommended).
+# Set an explicit list only if the server is unreachable:
+#   PROBE_TARGETS="5.144.179.124,213.21.246.122"
+PROBE_TARGETS=""
+
+# Upper bound for one check, seconds.
+PROBE_TIMEOUT="300"

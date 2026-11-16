@@ -72,6 +72,37 @@ if [ "$SAVE" -eq 0 ]; then
     trap 'rm -f "$OUT_JSON" "$OUT_TXT"' EXIT
 fi
 
+# --- results pushed by a Russian probe host (behind TSPU) ---------------------
+# A host inside Russia runs tspu-check.pl and pushes the result here. Prefer it
+# over a local check: only a network behind TSPU can see the Russian DPI.
+REMOTE_ENABLE="${TSPU_REMOTE:-0}"
+REMOTE_JSON="$STATE_DIR/tspu-remote.json"
+REMOTE_TXT="$STATE_DIR/tspu-remote.txt"
+REMOTE_MAX_AGE="${TSPU_REMOTE_MAX_AGE:-21600}"
+
+if [ "$REMOTE_ENABLE" = "1" ] && [ -f "$REMOTE_JSON" ] && [ -f "$REMOTE_TXT" ]; then
+    age=$(( $(date +%s) - $(stat -c %Y "$REMOTE_JSON" 2>/dev/null || echo 0) ))
+    if [ "$age" -lt "$REMOTE_MAX_AGE" ]; then
+        if [ -z "$TARGET" ]; then
+            cat "$REMOTE_TXT"
+            if [ "$SAVE" -eq 1 ]; then
+                cp -f "$REMOTE_JSON" "$OUT_JSON"
+                cp -f "$REMOTE_TXT" "$OUT_TXT"
+            fi
+            exit 0
+        fi
+        line=$(awk -F'\t' -v ip="$TARGET" '$1 == ip' "$REMOTE_TXT")
+        if [ -n "$line" ]; then
+            printf '%s\n' "$line"
+            if [ "$SAVE" -eq 1 ]; then
+                cp -f "$REMOTE_JSON" "$OUT_JSON"
+                cp -f "$REMOTE_TXT" "$OUT_TXT"
+            fi
+            exit 0
+        fi
+    fi
+fi
+
 if [ "$CACHED" -eq 1 ] && [ -f "$OUT_TXT" ] && [ -f "$OUT_JSON" ]; then
     age=$(( $(date +%s) - $(stat -c %Y "$OUT_JSON" 2>/dev/null || echo 0) ))
     if [ "$age" -lt "$CACHE_TTL" ]; then

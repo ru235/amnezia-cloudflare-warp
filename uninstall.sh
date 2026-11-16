@@ -116,7 +116,7 @@ run systemctl daemon-reload
 
 info "removing scripts"
 for script in warp-amnezia-routing.sh peer-monitor.sh warp-rotate.sh bot-guard.sh \
-              warp-daily-report.py warp-bot.py tspu-check.sh tspu-check.pl; do
+              warp-daily-report.py warp-bot.py tspu-check.sh tspu-check.pl tspu-ingest.sh; do
     run rm -f "$BIN_DIR/$script"
 done
 
