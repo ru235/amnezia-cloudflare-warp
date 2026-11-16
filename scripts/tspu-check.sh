@@ -27,17 +27,19 @@ PROBE_KEY="${TSPU_PROBE_KEY:-/root/.ssh/id_ed25519_monitor}"
 DPI_HOP="${TSPU_DPI_HOP:-}"
 QUIET=0
 CACHED=0
+SAVE=1
 TARGET=""
 
 usage() {
     cat <<'EOF'
 tspu-check.sh — проверка IP на блокировку ТСПУ
 
-  tspu-check.sh [--target IP] [--cached|--fresh] [--quiet]
+  tspu-check.sh [--target IP] [--cached|--fresh] [--no-save] [--quiet]
 
   --target IP   проверить только этот адрес
   --cached      вернуть результат из кеша, если ему меньше TSPU_CACHE_TTL
   --fresh       игнорировать кеш (по умолчанию)
+  --no-save     не обновлять общий кеш (для разовых проверок)
   --quiet       не печатать пояснения в stderr
 
 Настройки в /etc/warp-monitor.conf:
@@ -52,6 +54,7 @@ while [ $# -gt 0 ]; do
         --target) TARGET="${2:-}"; shift 2 ;;
         --cached) CACHED=1; shift ;;
         --fresh|--no-cache) CACHED=0; shift ;;
+        --no-save) SAVE=0; shift ;;
         --quiet|-q) QUIET=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) echo "unknown option: $1" >&2; exit 2 ;;
@@ -62,6 +65,12 @@ done
 
 mkdir -p "$STATE_DIR"
 chmod 755 "$STATE_DIR" 2>/dev/null || true
+
+if [ "$SAVE" -eq 0 ]; then
+    OUT_JSON=$(mktemp)
+    OUT_TXT=$(mktemp)
+    trap 'rm -f "$OUT_JSON" "$OUT_TXT"' EXIT
+fi
 
 if [ "$CACHED" -eq 1 ] && [ -f "$OUT_TXT" ] && [ -f "$OUT_JSON" ]; then
     age=$(( $(date +%s) - $(stat -c %Y "$OUT_JSON" 2>/dev/null || echo 0) ))

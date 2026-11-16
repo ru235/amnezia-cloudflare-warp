@@ -260,6 +260,29 @@ def tspu_text():
     return "\n\n".join(lines)
 
 
+def tspu_probe(ip):
+    """One-off TSPU check for a single address; does not touch the shared cache."""
+    if CFG.get("TSPU_ENABLE", "0") != "1" or not os.path.exists(TSPU_SCRIPT):
+        return ""
+    out = sh(f"{TSPU_SCRIPT} --fresh --no-save --target {ip}", timeout=200)
+    for line in out.splitlines():
+        parts = line.split("\t")
+        if len(parts) < 2 or parts[0].strip() != ip:
+            continue
+        status = parts[1].strip()
+        detail = parts[2].strip() if len(parts) > 2 else ""
+        if status == "blocked":
+            mark = "🔴 заблокирован"
+        elif status == "not_blocked":
+            mark = "✅ не заблокирован"
+        elif status == "unknown":
+            return "⚪ не проверено"
+        else:
+            mark = f"⚪ {status}"
+        return f"{mark} — {detail}" if detail else mark
+    return ""
+
+
 def diagnose_peer(ip):
     """Short server-side diagnosis for an unreachable peer."""
     p22 = run_rc(f"timeout 4 bash -c 'exec 3<>/dev/tcp/{ip}/22'", 6) == 0
@@ -290,8 +313,7 @@ def diagnose_peer(ip):
         details.append(f"Трассировка: {trace_last}")
 
     if CFG.get("TSPU_ENABLE", "0") == "1":
-        data = tspu_data(cached=False, target=ip)
-        label = tspu_label(ip, data)
+        label = tspu_probe(ip)
         if label:
             where = "точка РФ" if CFG.get("TSPU_PROBE_HOST") else "локально"
             details.append(f"ТСПУ ({where}): {label}")

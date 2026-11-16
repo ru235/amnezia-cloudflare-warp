@@ -72,7 +72,7 @@ diagnose_peer() {
 
     if [ "${TSPU_ENABLE:-0}" = "1" ] && [ -x /usr/local/sbin/tspu-check.sh ]; then
         [ -n "${TSPU_PROBE_HOST:-}" ] && label="ТСПУ (точка РФ)" || label="ТСПУ (локально)"
-        tspu=$(timeout 110 /usr/local/sbin/tspu-check.sh --target "$ip" --fresh 2>/dev/null \
+        tspu=$(timeout 110 /usr/local/sbin/tspu-check.sh --target "$ip" --fresh --no-save 2>/dev/null \
             | awk -F'\t' -v ip="$ip" '$1 == ip { print $2 "\t" $3; exit }')
     fi
 
