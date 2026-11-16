@@ -7,6 +7,7 @@ import csv
 import json
 import os
 import subprocess
+import sys
 import time
 from datetime import datetime, timedelta
 
@@ -614,6 +615,7 @@ def tspu_status(cfg):
 
 
 def main():
+    dry = "--dry-run" in sys.argv[1:] or "--print" in sys.argv[1:]
     cfg = load_env(CONF)
     tg = load_env(TG_ENV)
     token = tg.get("TG_TOKEN", "")
@@ -639,6 +641,11 @@ def main():
         f"💾 Диск: {me['disk']}% · Amnezia: {'ok' if 'amnezia' in me['amnezia'] else 'нет'}\n"
         f"<i>👥 онлайн Amnezia · 🔄 смены IPv4: 24ч / 7д / всё · 🕒 последнее рукопожатие</i>"
     )
+
+    if dry:
+        print(caption)
+        print(f"\nchart: {path}")
+        return
 
     if not token or not chat:
         print(f"Telegram is not configured, report saved: {path}")
