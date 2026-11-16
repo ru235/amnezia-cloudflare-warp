@@ -516,8 +516,8 @@ def send_photo(token, chat, path, caption):
         f"https://api.telegram.org/bot{token}/sendPhoto",
         "-F", f"chat_id={chat}",
         "-F", f"photo=@{path}",
-        "-F", f"caption={caption}",
-        "-F", "parse_mode=HTML",
+        "--form-string", f"caption={caption}",
+        "--form-string", "parse_mode=HTML",
     ], capture_output=True, text=True).stdout
 
 
@@ -547,6 +547,19 @@ def server_caption(st, dot="🟢"):
     if st.get("last_hs"):
         text += f" · 🕒 {human_age(time.time() - st['last_hs'])}"
     return text
+
+
+def server_block(st):
+    if not st["online"]:
+        return "🖥 " + st["name"] + "\n  🔴 недоступен"
+    lines = ["🖥 " + st["name"]]
+    lines.append("  WARP: " + ("on" if st["warp_ok"] else "off") + " · IPv4 " + st["warp4"])
+    if st.get("total"):
+        hs = human_age(time.time() - st["last_hs"]) if st.get("last_hs") else "—"
+        lines.append("  👥 " + str(st["peers"]) + "/" + str(st["total"]) + " клиентов · 🕒 " + hs)
+    if st.get("chg") or st.get("chg7") or st.get("chg_all"):
+        lines.append("  🔄 смены IPv4: " + str(st.get("chg", 0)) + " / " + str(st.get("chg7", 0)) + " / " + str(st.get("chg_all", 0)) + " (24ч / 7д / всё)")
+    return "\n".join(lines)
 
 
 def tspu_status(cfg):
@@ -606,7 +619,7 @@ def tspu_status(cfg):
         except (TypeError, ValueError):
             pass
     if meta:
-        lines.append(f"<i>{'; '.join(meta)}</i>")
+        lines.append(f"<i>Источник: {'; '.join(meta)}</i>")
     if unknown_reason:
         lines.append(f"<i>{unknown_reason}</i>")
     elif not data.get("remote") and not cfg.get("TSPU_PROBE_HOST"):
@@ -628,17 +641,15 @@ def main():
 
     path = build_dashboard(cfg, me, peer, history, state)
 
-    caption = (
-        f"📊 <b>VPN отчёт — {datetime.now().strftime('%d.%m.%Y')}</b>\n"
-        f"{server_caption(me)}\n"
-    )
+    caption = f"📊 <b>VPN отчёт — {datetime.now().strftime('%d.%m.%Y')}</b>\n\n"
+    caption += server_block(me) + "\n"
     if peer is not None:
-        caption += f"{server_caption(peer)}\n"
+        caption += "\n" + server_block(peer) + "\n"
     tspu = tspu_status(cfg)
     if tspu:
-        caption += tspu + "\n"
+        caption += "\n" + tspu + "\n"
     caption += (
-        f"💾 Диск: {me['disk']}% · Amnezia: {'ok' if 'amnezia' in me['amnezia'] else 'нет'}\n"
+        f"\n💾 Диск: {me['disk']}% · Amnezia: {'ok' if 'amnezia' in me['amnezia'] else 'нет'}\n"
         f"<i>👥 онлайн Amnezia · 🔄 смены IPv4: 24ч / 7д / всё · 🕒 последнее рукопожатие</i>"
     )
 

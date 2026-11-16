@@ -263,7 +263,7 @@ def tspu_text():
         except (TypeError, ValueError):
             pass
     if meta:
-        lines.append(f"<i>{'; '.join(meta)}</i>")
+        lines.append(f"<i>Источник: {'; '.join(meta)}</i>")
     if unknown_reason:
         lines.append(f"<i>{unknown_reason}</i>")
     elif not data.get("remote") and not CFG.get("TSPU_PROBE_HOST"):
@@ -598,19 +598,21 @@ def detail_text(s):
                 f"🟡 онлайн, но метрики по SSH недоступны\n\n"
                 f"<i>Ротация IPv6: {s['rotate']}</i>")
     tspu = tspu_label(s["ip"], tspu_cached_read())
-    tspu_line = f"\n🛡 ТСПУ: <b>{tspu}</b>" if tspu else ""
+    tspu_line = f"\n\n🛡 <b>ТСПУ:</b> {tspu}" if tspu else ""
     return (
-        f"🖥 <b>{s['name']}</b>\n<code>{s['ip']}</code>\n\n"
-        f"WARP: <b>{'Connected' if st['warp_ok'] else 'Disconnected'}</b>\n"
-        f"IPv4: <code>{st['warp4']}</code>\n"
-        f"IPv6: <code>{st['warp6']}</code>\n"
-        f"Amnezia: <b>{st['amnezia']}</b>\n"
-        f"👥 Онлайн: <b>{online_str(st)}</b>\n"
-        f"🕒 Последний клиент: <b>{activity_str(st)}</b>\n"
-        f"🔄 Смены IPv4: <b>{st.get('chg', 0)}</b> за 24ч · "
-        f"<b>{st.get('chg7', 0)}</b> за 7д · <b>{st.get('chg_all', 0)}</b> всего\n"
-        f"Диск: <b>{st['disk']}%</b>\n"
-        f"Uptime: {st['uptime']}{tspu_line}\n\n"
+        f"🖥 <b>{s['name']}</b>  <code>{s['ip']}</code>\n\n"
+        f"<b>Сеть</b>\n"
+        f"  WARP: <b>{'Connected' if st['warp_ok'] else 'Disconnected'}</b>\n"
+        f"  IPv4: <code>{st['warp4']}</code>\n"
+        f"  IPv6: <code>{st['warp6']}</code>\n\n"
+        f"<b>Amnezia</b>\n"
+        f"  Контейнер: <b>{st['amnezia']}</b>\n"
+        f"  👥 Онлайн: <b>{online_str(st)}</b>\n"
+        f"  🕒 Последний клиент: <b>{activity_str(st)}</b>\n"
+        f"  🔄 Смены IPv4: <b>{st.get('chg', 0)}</b> / <b>{st.get('chg7', 0)}</b> / <b>{st.get('chg_all', 0)}</b> (24ч / 7д / всё)\n\n"
+        f"<b>Система</b>\n"
+        f"  Диск: <b>{st['disk']}%</b> · Uptime: {st['uptime']}"
+        f"{tspu_line}\n\n"
         f"<i>Ротация IPv6: {s['rotate']}</i>"
     )
 
