@@ -7,10 +7,10 @@
 # TSPU_PROBE_HOST to a Russian VPS and the check will run there over SSH.
 #
 # Usage:
-#   tspu-check.sh [--target IP] [--cached] [--fresh] [--quiet]
+#   tspu-check.sh [--target IP] [--cached] [--fresh] [--no-save] [--quiet]
 #
-# Output: one line per target: "IP<TAB>blocked|not_blocked<TAB>detail".
-# Also writes /var/lib/warp-monitor/tspu.json and tspu.txt.
+# Output: one line per target: "IP<TAB>blocked|not_blocked|unknown<TAB>detail".
+# Also writes /var/lib/warp-monitor/tspu.json and tspu.txt (unless --no-save).
 set -u
 . /etc/warp-monitor.conf 2>/dev/null || true
 
