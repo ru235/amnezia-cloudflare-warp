@@ -524,7 +524,7 @@ def switch_primary():
         self_cmds = [
             'sed -i \'s/^BOT_ROLE=.*/BOT_ROLE="active"/\' /etc/warp-monitor.conf',
             'grep -q \'^BOT_ROLE=\' /etc/warp-monitor.conf || echo \'BOT_ROLE="active"\' >> /etc/warp-monitor.conf',
-            'systemctl enable warp-bot.service >/dev/null 2>&1 || true',
+            'systemctl enable --now warp-bot.service',
             'systemctl disable --now bot-guard.timer >/dev/null 2>&1 || true',
         ]
         stop_self = False
