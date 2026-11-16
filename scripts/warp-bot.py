@@ -500,6 +500,7 @@ def switch_primary():
         self_cmds = [
             'sed -i \'s/^BOT_ROLE=.*/BOT_ROLE="passive"/\' /etc/warp-monitor.conf',
             'grep -q \'^BOT_ROLE=\' /etc/warp-monitor.conf || echo \'BOT_ROLE="passive"\' >> /etc/warp-monitor.conf',
+            'systemctl disable warp-bot.service >/dev/null 2>&1 || true',
             'systemctl enable --now bot-guard.timer',
         ]
         stop_self = True
@@ -508,12 +509,14 @@ def switch_primary():
         peer_cmds = [
             'sed -i \'s/^BOT_ROLE=.*/BOT_ROLE="passive"/\' /etc/warp-monitor.conf',
             'grep -q \'^BOT_ROLE=\' /etc/warp-monitor.conf || echo \'BOT_ROLE="passive"\' >> /etc/warp-monitor.conf',
+            'systemctl disable warp-bot.service >/dev/null 2>&1 || true',
             'systemctl enable --now bot-guard.timer',
             'systemctl stop warp-bot.service >/dev/null 2>&1 || true',
         ]
         self_cmds = [
             'sed -i \'s/^BOT_ROLE=.*/BOT_ROLE="active"/\' /etc/warp-monitor.conf',
             'grep -q \'^BOT_ROLE=\' /etc/warp-monitor.conf || echo \'BOT_ROLE="active"\' >> /etc/warp-monitor.conf',
+            'systemctl enable warp-bot.service >/dev/null 2>&1 || true',
             'systemctl disable --now bot-guard.timer >/dev/null 2>&1 || true',
         ]
         stop_self = False
