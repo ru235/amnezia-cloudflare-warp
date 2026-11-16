@@ -843,6 +843,10 @@ def main():
         for upd in res.get("result", []):
             offset = upd["update_id"] + 1
             CURRENT_UPDATE_ID = upd["update_id"]
+            kind = "message" if "message" in upd else "callback_query"
+            payload = ((upd.get("message") or {}).get("text")
+                       or (upd.get("callback_query") or {}).get("data") or "")
+            print(f"update {upd['update_id']} {kind} {payload!r}", flush=True)
             try:
                 if "message" in upd:
                     handle_message(upd["message"])
