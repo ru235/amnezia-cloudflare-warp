@@ -528,9 +528,6 @@ def switch_primary():
         sh(c, timeout=20)
 
     if stop_self:
-        subprocess.Popen("sleep 2; systemctl stop warp-bot.service",
-                         shell=True, stdout=subprocess.DEVNULL,
-                         stderr=subprocess.DEVNULL)
         return (f"✅ Основной сервер переключён на {new_primary}.\n"
                 "Этот бот останавливается; дальше команды принимает новый основной.")
     return f"✅ Основной сервер переключён на {new_primary}. Бот продолжает работать здесь."
@@ -712,7 +709,7 @@ def handle_message(msg):
         res = switch_primary()
         send(res, main_kb())
         if res.startswith("✅") and BOT_ROLE == "active":
-            subprocess.Popen("sleep 2; systemctl stop warp-bot.service",
+            subprocess.Popen("sleep 5; systemctl stop warp-bot.service",
                              shell=True, stdout=subprocess.DEVNULL,
                              stderr=subprocess.DEVNULL)
     elif cmd == "/report":
@@ -752,7 +749,7 @@ def handle_callback(cb):
         res = switch_primary()
         edit(mid, res, main_kb())
         if res.startswith("✅") and BOT_ROLE == "active":
-            subprocess.Popen("sleep 2; systemctl stop warp-bot.service",
+            subprocess.Popen("sleep 5; systemctl stop warp-bot.service",
                              shell=True, stdout=subprocess.DEVNULL,
                              stderr=subprocess.DEVNULL)
     elif data == "menu":
