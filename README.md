@@ -103,10 +103,10 @@ curl -4 -s https://www.cloudflare.com/cdn-cgi/trace | grep '^ip='
 
 ```bash
 # сервер 1
-sudo ./install.sh --self-name Helsinki --peer-name Aeza --peer-ip 203.0.113.20
+sudo ./install.sh --self-name HostVDS --peer-name Aeza --peer-ip 203.0.113.20
 
 # сервер 2
-sudo ./install.sh --self-name Aeza --peer-name Helsinki --peer-ip 203.0.113.10
+sudo ./install.sh --self-name Aeza --peer-name HostVDS --peer-ip 203.0.113.10
 ```
 
 Установщик напечатает публичный ключ для мониторинга пира — добавьте его на второй сервер:

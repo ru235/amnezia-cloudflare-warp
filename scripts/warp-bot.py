@@ -567,21 +567,34 @@ def activity_str(st):
     return f"{human_age(time.time() - st['last_hs'])} ({st.get('last_peer', '-')})"
 
 
+def is_primary(s):
+    if s["ip"] == SELF_IP:
+        return BOT_ROLE == "active"
+    if s["ip"] == PEER_IP:
+        return BOT_ROLE == "passive"
+    return False
+
+
 def summary(s):
     st = get_server(s)
+    star = " ⭐" if is_primary(s) else ""
     if not st["online"]:
-        return f"🔴 <b>{s['name']}</b> · <code>{s['ip']}</code>\nSSH: нет ответа"
+        return f"🔴 <b>{s['name']}{star}</b> · <code>{s['ip']}</code>\nSSH: нет ответа"
     if not st.get("ssh", True):
-        return f"🟡 <b>{s['name']}</b> · <code>{s['ip']}</code>\nонлайн · метрики по SSH недоступны"
+        return f"🟡 <b>{s['name']}{star}</b> · <code>{s['ip']}</code>\nонлайн · метрики по SSH недоступны"
     warp = "on" if st["warp_ok"] else "off"
     people = f" · 👥 {st['peers']}/{st['total']}" if st.get("total") else ""
-    return (f"🟢 <b>{s['name']}</b> · <code>{s['ip']}</code>\n"
+    return (f"🟢 <b>{s['name']}{star}</b> · <code>{s['ip']}</code>\n"
             f"WARP {warp} · IPv4 <code>{st['warp4']}</code>{people}")
+
+
+def primary_name():
+    return SELF_NAME if BOT_ROLE == "active" else PEER_NAME
 
 
 def status_text():
     now = datetime.now().strftime("%d.%m %H:%M UTC")
-    parts = [f"🛰 <b>Статус серверов</b>\n<i>{now}</i>\n"]
+    parts = [f"🛰 <b>Статус серверов</b>\n<i>{now}</i>\n⭐ Основной сервер: <b>{primary_name()}</b>"]
     for s in SERVERS:
         parts.append(summary(s))
     parts.append("\n<i>Проверка: каждую минуту</i>")
@@ -602,8 +615,9 @@ def detail_text(s):
                 f"<i>Ротация IPv6: {s['rotate']}</i>")
     tspu = tspu_label(s["ip"], tspu_cached_read())
     tspu_line = f"\n\n🛡 <b>ТСПУ:</b> {tspu}" if tspu else ""
+    star = " ⭐" if is_primary(s) else ""
     return (
-        f"🖥 <b>{s['name']}</b>  <code>{s['ip']}</code>\n\n"
+        f"🖥 <b>{s['name']}{star}</b>  <code>{s['ip']}</code>\n\n"
         f"<b>Сеть</b>\n"
         f"  WARP: <b>{'Connected' if st['warp_ok'] else 'Disconnected'}</b>\n"
         f"  IPv4: <code>{st['warp4']}</code>\n"
@@ -670,7 +684,7 @@ def handle_message(msg):
     cmd = text.split()[0].lower().split("@")[0] if text else ""
 
     if cmd in ("/start", "/menu"):
-        send("🛰 <b>VPN Control</b>\nУправление и мониторинг серверов.\nВыберите действие:", main_kb())
+        send(f"🛰 <b>VPN Control</b>\nОсновной сервер: <b>{primary_name()}</b> ⭐\nВыберите действие:", main_kb())
     elif cmd in ("/help",):
         send("🛰 <b>Команды</b>\n\n"
              "/menu — главное меню\n"
@@ -742,7 +756,7 @@ def handle_callback(cb):
                              shell=True, stdout=subprocess.DEVNULL,
                              stderr=subprocess.DEVNULL)
     elif data == "menu":
-        edit(mid, "🛰 <b>VPN Control</b>\nВыберите действие:", main_kb())
+        edit(mid, f"🛰 <b>VPN Control</b>\nОсновной сервер: <b>{primary_name()}</b> ⭐\nВыберите действие:", main_kb())
 
 
 def should_notify_start():
