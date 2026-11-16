@@ -41,6 +41,7 @@ SELF_NAME = CFG.get("SELF_NAME", "Server")
 PEER_IP = CFG.get("PEER_IP", "")
 PEER_NAME = CFG.get("PEER_NAME", "Peer")
 BOT_ROLE = CFG.get("BOT_ROLE", "active")
+CURRENT_UPDATE_ID = 0
 
 SERVERS = []
 if CFG.get("SERVER1_IP"):
@@ -486,8 +487,9 @@ def peer_ssh(cmd, timeout=20):
 def switch_primary():
     """Move the active bot (and the 'primary server' role) to the other server.
 
-    Returns a human-readable result string. When this server was active, it
-    schedules its own warp-bot.service to stop after returning.
+    Returns a human-readable result string. The caller must send its reply
+    before calling retire_after_switch(), which enables the passive guard and
+    stops this bot.
     """
     if not PEER_IP:
         return "❌ PEER_IP не задан — переключение невозможно."
@@ -505,11 +507,14 @@ def switch_primary():
             'systemctl disable --now bot-guard.timer >/dev/null 2>&1 || true',
             'systemctl enable --now warp-bot.service',
         ]
+        # The guard must be enabled only after the final reply has been sent:
+        # its first tick can stop this very bot within a second.
         self_cmds = [
             'sed -i \'s/^BOT_ROLE=.*/BOT_ROLE="passive"/\' /etc/warp-monitor.conf',
             'grep -q \'^BOT_ROLE=\' /etc/warp-monitor.conf || echo \'BOT_ROLE="passive"\' >> /etc/warp-monitor.conf',
             'systemctl disable warp-bot.service >/dev/null 2>&1 || true',
-            'systemctl enable --now bot-guard.timer',
+            # enabled now, started only after the reply (retire_after_switch)
+            'systemctl enable bot-guard.timer >/dev/null 2>&1 || true',
         ]
         stop_self = True
         new_primary = f"{PEER_NAME} ({PEER_IP})"
@@ -530,15 +535,41 @@ def switch_primary():
         stop_self = False
         new_primary = f"{SELF_NAME} ({SELF_IP})"
 
-    for c in peer_cmds:
-        peer_ssh(c, timeout=20)
-    for c in self_cmds:
-        sh(c, timeout=20)
+    # One SSH connection and one shell for the whole batch: switching used to
+    # take 4 round-trips per side.
+    peer_ssh("; ".join(peer_cmds), timeout=45)
+    sh("; ".join(self_cmds), timeout=30)
 
     if stop_self:
         return (f"✅ Основной сервер переключён на {new_primary}.\n"
                 "Этот бот останавливается; дальше команды принимает новый основной.")
     return f"✅ Основной сервер переключён на {new_primary}. Бот продолжает работать здесь."
+
+
+def confirm_current_update():
+    """Mark the update being handled as confirmed before the peer bot starts.
+
+    Telegram redelivers an update until getUpdates is called with a higher
+    offset. The peer bot starts polling during the switch, so without this it
+    receives the same /switch callback and immediately switches back.
+    """
+    if not CURRENT_UPDATE_ID:
+        return
+    try:
+        api("getUpdates", offset=CURRENT_UPDATE_ID + 1, timeout=0, limit=1)
+    except Exception:
+        pass
+
+
+def retire_after_switch():
+    """Enable the passive guard and stop this bot now that the reply is out.
+
+    The guard's first tick may stop warp-bot.service almost immediately, which
+    is exactly why it must run after the confirmation message was sent.
+    """
+    sh("systemctl enable --now bot-guard.timer", timeout=20)
+    subprocess.Popen("sleep 5; systemctl stop warp-bot.service", shell=True,
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def main_kb():
@@ -714,12 +745,12 @@ def handle_message(msg):
         send(tspu_text(), back_kb())
     elif cmd == "/switch":
         send("🔄 Переключаю основной сервер…")
+        was_active = (BOT_ROLE == "active")
+        confirm_current_update()
         res = switch_primary()
         send(res, main_kb())
-        if res.startswith("✅") and BOT_ROLE == "active":
-            subprocess.Popen("sleep 5; systemctl stop warp-bot.service",
-                             shell=True, stdout=subprocess.DEVNULL,
-                             stderr=subprocess.DEVNULL)
+        if was_active and res.startswith("✅"):
+            retire_after_switch()
     elif cmd == "/report":
         send("📊 Готовлю отчёт…")
         ok, err = run_report()
@@ -754,12 +785,13 @@ def handle_callback(cb):
         send("✅ Отчёт отправлен." if ok else f"❌ Ошибка отчёта:\n<code>{err}</code>", main_kb())
     elif data == "switch":
         edit(mid, "🔄 Переключаю основной сервер…")
+        was_active = (BOT_ROLE == "active")
+        confirm_current_update()
         res = switch_primary()
-        edit(mid, res, main_kb())
-        if res.startswith("✅") and BOT_ROLE == "active":
-            subprocess.Popen("sleep 5; systemctl stop warp-bot.service",
-                             shell=True, stdout=subprocess.DEVNULL,
-                             stderr=subprocess.DEVNULL)
+        if not edit(mid, res, main_kb()).get("ok"):
+            send(res, main_kb())
+        if was_active and res.startswith("✅"):
+            retire_after_switch()
     elif data == "menu":
         edit(mid, f"🛰 <b>VPN Control</b>\nОсновной сервер: <b>{primary_name()}</b> ⭐\nВыберите действие:", main_kb())
 
@@ -782,6 +814,7 @@ def should_notify_start():
 
 
 def main():
+    global CURRENT_UPDATE_ID
     commands = [
         {"command": "menu", "description": "Главное меню"},
         {"command": "status", "description": "Статус серверов"},
@@ -796,17 +829,10 @@ def main():
     if should_notify_start():
         send("🤖 <b>VPN Control запущен</b>\nВыберите действие:", main_kb())
 
-    # Drain updates that piled up while no bot was polling. Without this a
-    # freshly-started bot re-processes the /switch callback handled by the
-    # previous server and flips the role straight back.
+    # The /switch handler confirms its update before starting the peer bot, so
+    # there is no need to blindly drop pending updates here: a message sent
+    # while the bot was down (guard failover) must still be answered.
     offset = 0
-    try:
-        res = api("getUpdates", timeout=0)
-        if res.get("ok"):
-            for upd in res.get("result", []):
-                offset = upd["update_id"] + 1
-    except Exception:
-        pass
 
     while True:
         res = api("getUpdates", offset=offset, timeout=30,
@@ -816,6 +842,7 @@ def main():
             continue
         for upd in res.get("result", []):
             offset = upd["update_id"] + 1
+            CURRENT_UPDATE_ID = upd["update_id"]
             try:
                 if "message" in upd:
                     handle_message(upd["message"])
