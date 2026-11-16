@@ -500,6 +500,11 @@ def switch_primary():
 
     self_active = (BOT_ROLE == "active")
 
+    # A running guard would stop this bot as soon as it sees the peer's SSH
+    # port open — possibly in the middle of this switch. It is re-enabled by
+    # retire_after_switch() once the reply is out.
+    sh("systemctl stop bot-guard.timer >/dev/null 2>&1 || true", timeout=15)
+
     if self_active:
         peer_cmds = [
             'sed -i \'s/^BOT_ROLE=.*/BOT_ROLE="active"/\' /etc/warp-monitor.conf',
@@ -537,7 +542,10 @@ def switch_primary():
 
     # One SSH connection and one shell for the whole batch: switching used to
     # take 4 round-trips per side.
-    peer_ssh("; ".join(peer_cmds), timeout=45)
+    out = peer_ssh("; ".join(peer_cmds) + "; echo SWITCH_OK", timeout=45)
+    if "SWITCH_OK" not in out:
+        return (f"❌ Не удалось выполнить команды на {PEER_NAME} ({PEER_IP}).\n"
+                "Роль не изменена, бот продолжает работать здесь.")
     sh("; ".join(self_cmds), timeout=30)
 
     if stop_self:
