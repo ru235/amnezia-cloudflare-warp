@@ -55,6 +55,12 @@ Advanced:
   --uninstall             Run uninstall.sh
   -h, --help              This help
 
+TSPU / DPI check (optional):
+  --tspu                  Enable TSPU block checks in reports and the bot
+  --no-tspu               Disable TSPU checks (binary stays installed)
+  --tspu-probe HOST       Run checks from a Russian VPS over SSH
+  --no-tspu-install       Do not download tspu-check.pl
+
 Examples:
   sudo ./install.sh
   sudo ./install.sh --telegram --token 123:ABC --chat 123456789
@@ -79,6 +85,15 @@ BYPASS_MARK="0x100cf"
 BYPASS_PRIO="10"
 WARP_IF="CloudflareWARP"
 AWG_IFACE="amn0"
+TSPU_ENABLE=""
+TSPU_TARGETS=""
+TSPU_PROBE_HOST=""
+TSPU_PROBE_USER="root"
+TSPU_PROBE_KEY="/root/.ssh/id_ed25519_monitor"
+TSPU_DPI_HOP=""
+TSPU_CACHE_TTL="600"
+TSPU_TIMEOUT="180"
+TSPU_INSTALL=1
 INSTALL_DEPS=0
 DRY_RUN=0
 DO_UNINSTALL=0
@@ -105,6 +120,14 @@ AWG_IFACE="${AWG_IFACE:-amn0}"
 AWG_PORT="${AWG_PORT:-}"
 ROTATE_LABEL_S1="${ROTATE_S1:-}"
 ROTATE_LABEL_S2="${ROTATE_S2:-}"
+TSPU_ENABLE="${TSPU_ENABLE:-0}"
+TSPU_TARGETS="${TSPU_TARGETS:-}"
+TSPU_PROBE_HOST="${TSPU_PROBE_HOST:-}"
+TSPU_PROBE_USER="${TSPU_PROBE_USER:-root}"
+TSPU_PROBE_KEY="${TSPU_PROBE_KEY:-/root/.ssh/id_ed25519_monitor}"
+TSPU_DPI_HOP="${TSPU_DPI_HOP:-}"
+TSPU_CACHE_TTL="${TSPU_CACHE_TTL:-600}"
+TSPU_TIMEOUT="${TSPU_TIMEOUT:-180}"
 
 # --- arguments ---------------------------------------------------------------
 while [ $# -gt 0 ]; do
@@ -126,6 +149,10 @@ while [ $# -gt 0 ]; do
         --awg-port)       AWG_PORT="$2"; shift 2 ;;
         --bypass-mark)    BYPASS_MARK="$2"; shift 2 ;;
         --bypass-prio)    BYPASS_PRIO="$2"; shift 2 ;;
+        --tspu)           TSPU_ENABLE=1; shift ;;
+        --no-tspu)        TSPU_ENABLE=0; shift ;;
+        --tspu-probe)     TSPU_PROBE_HOST="$2"; TSPU_ENABLE=1; shift 2 ;;
+        --no-tspu-install) TSPU_INSTALL=0; shift ;;
         --install-deps)   INSTALL_DEPS=1; shift ;;
         --dry-run)        DRY_RUN=1; shift ;;
         --uninstall)      DO_UNINSTALL=1; shift ;;
@@ -163,7 +190,11 @@ need_pkgs=()
 command -v curl     >/dev/null 2>&1 || need_pkgs+=(curl)
 command -v iptables >/dev/null 2>&1 || need_pkgs+=(iptables)
 command -v python3  >/dev/null 2>&1 || need_pkgs+=(python3)
+command -v traceroute >/dev/null 2>&1 || need_pkgs+=(traceroute)
 python3 -c 'import matplotlib' >/dev/null 2>&1 || need_pkgs+=(python3-matplotlib)
+if [ "$TSPU_INSTALL" -eq 1 ] || [ "$TSPU_ENABLE" = "1" ]; then
+    command -v perl >/dev/null 2>&1 || need_pkgs+=(perl)
+fi
 
 if [ "${#need_pkgs[@]}" -gt 0 ]; then
     if [ "$INSTALL_DEPS" -eq 1 ]; then
@@ -243,6 +274,11 @@ echo "    AWG         : ${UGW_CONTAINER:-not found}, UDP ${AWG_PORT}, iface ${AW
 echo "    routing     : mark ${BYPASS_MARK}, prio ${BYPASS_PRIO}, WARP iface ${WARP_IF}"
 echo "    report      : ${REPORT_UTC} UTC (${REPORT_LABEL})"
 echo "    rotation    : ${ROTATE_UTC} UTC"
+if [ "$TSPU_ENABLE" = "1" ]; then
+    echo "    tspu        : enabled, ${TSPU_PROBE_HOST:+probe $TSPU_PROBE_HOST}${TSPU_PROBE_HOST:-local check}"
+else
+    echo "    tspu        : disabled"
+fi
 if [ "$TELEGRAM" -eq 1 ]; then
     echo "    telegram    : enabled, bot role ${BOT_ROLE}"
 else
@@ -289,6 +325,15 @@ BYPASS_PRIO="$BYPASS_PRIO"
 WARP_IF="$WARP_IF"
 AWG_IFACE="$AWG_IFACE"
 AWG_PORT="$AWG_PORT"
+
+TSPU_ENABLE="$TSPU_ENABLE"
+TSPU_TARGETS="$TSPU_TARGETS"
+TSPU_PROBE_HOST="$TSPU_PROBE_HOST"
+TSPU_PROBE_USER="$TSPU_PROBE_USER"
+TSPU_PROBE_KEY="$TSPU_PROBE_KEY"
+TSPU_DPI_HOP="$TSPU_DPI_HOP"
+TSPU_CACHE_TTL="$TSPU_CACHE_TTL"
+TSPU_TIMEOUT="$TSPU_TIMEOUT"
 EOF
 chmod 644 "$CONF_PATH"
 ok "config written"
@@ -302,7 +347,21 @@ install -m 755 "$REPO_DIR/scripts/warp-rotate.sh"          "$BIN_DIR/warp-rotate
 install -m 755 "$REPO_DIR/scripts/bot-guard.sh"            "$BIN_DIR/bot-guard.sh"
 install -m 755 "$REPO_DIR/scripts/warp-daily-report.py"    "$BIN_DIR/warp-daily-report.py"
 install -m 755 "$REPO_DIR/scripts/warp-bot.py"             "$BIN_DIR/warp-bot.py"
+install -m 755 "$REPO_DIR/scripts/tspu-check.sh"           "$BIN_DIR/tspu-check.sh"
 ok "scripts installed"
+
+# --- TSPU checker -------------------------------------------------------------
+if [ "$TSPU_INSTALL" -eq 1 ]; then
+    info "installing tspu-check.pl"
+    if bash "$REPO_DIR/scripts/install-tspu-check.sh"; then
+        ok "tspu-check installed"
+    else
+        warn "tspu-check installation failed; TSPU checks will be skipped"
+    fi
+fi
+if [ "$TSPU_ENABLE" = "1" ] && [ ! -x /usr/local/sbin/tspu-check.pl ]; then
+    warn "TSPU checks are enabled but /usr/local/sbin/tspu-check.pl is missing"
+fi
 
 # --- Telegram env ------------------------------------------------------------
 if [ "$TELEGRAM" -eq 1 ]; then

@@ -42,11 +42,28 @@ BOT_ROLE="active"
 # --- routing -----------------------------------------------------------------
 # Mark used for traffic that must bypass WARP (SSH, Caddy, AWG transport).
 BYPASS_MARK="0x100cf"
-# ip rule priority. WARP installs its own rule at priority 99, so this must be
-# lower (evaluated first).
+# Preferred ip rule priority. The routing script automatically moves this rule
+# above WARP's own rule (WARP has used priorities 9, 99 and 32765).
 BYPASS_PRIO="10"
 WARP_IF="CloudflareWARP"
 # AmneziaWG host interface (inside the container it is awg0; on the host amn0).
 AWG_IFACE="amn0"
 # Leave empty to auto-detect from the container.
 AWG_PORT=""
+
+# --- TSPU / DPI block check ---------------------------------------------------
+# tspu-check.pl detects whether packets die on Russian TSPU/DPI. It is only
+# meaningful from a network behind that DPI. Set TSPU_PROBE_HOST to a Russian
+# VPS, otherwise the check runs on this server (useful only if the server itself
+# is in Russia; for foreign servers it cannot see the Russian TSPU).
+TSPU_ENABLE="0"
+# Comma-separated IPs/CIDRs. Empty = SELF_IP + PEER_IP + SERVER1/2_IP.
+TSPU_TARGETS=""
+# Russian vantage point: user@host or host. Empty = run locally.
+TSPU_PROBE_HOST=""
+TSPU_PROBE_USER="root"
+TSPU_PROBE_KEY="/root/.ssh/id_ed25519_monitor"
+# Manual DPI hop (from mtr to a known blocked IP). Empty = auto-detect.
+TSPU_DPI_HOP=""
+TSPU_CACHE_TTL="600"
+TSPU_TIMEOUT="180"

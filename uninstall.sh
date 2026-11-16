@@ -67,8 +67,17 @@ flush_routing() {
     AWG_PORT="${AWG_PORT:-44059}"
 
     info "removing routing rules"
-    run ip rule del priority "$BYPASS_PRIO" fwmark "$BYPASS_MARK" lookup main
-    run ip -6 rule del priority "$BYPASS_PRIO" fwmark "$BYPASS_MARK" lookup main
+    for family in "" "-6"; do
+        for prio in $(ip $family rule show 2>/dev/null | awk -v mark="$BYPASS_MARK" '
+            $1 ~ /^[0-9]+:$/ {
+                p = $1; sub(":", "", p)
+                for (i = 2; i <= NF; i++)
+                    if ($i == "fwmark" && $(i+1) == mark &&
+                        $(i+2) == "lookup" && $(i+3) == "main") print p
+            }'); do
+            run ip $family rule del priority "$prio" fwmark "$BYPASS_MARK" lookup main
+        done
+    done
 
     run iptables -t mangle -D PREROUTING -i "$AWG_IFACE" -p udp --sport "$AWG_PORT" -j MARK --set-mark "$BYPASS_MARK"
     run iptables -t mangle -D PREROUTING -m conntrack --ctstate DNAT -j MARK --set-mark "$BYPASS_MARK"
@@ -107,7 +116,7 @@ run systemctl daemon-reload
 
 info "removing scripts"
 for script in warp-amnezia-routing.sh peer-monitor.sh warp-rotate.sh bot-guard.sh \
-              warp-daily-report.py warp-bot.py; do
+              warp-daily-report.py warp-bot.py tspu-check.sh tspu-check.pl; do
     run rm -f "$BIN_DIR/$script"
 done
 

@@ -4,6 +4,7 @@
 # Works without Telegram: if /etc/warp-telegram.env is missing or has no token,
 # the image is still generated and its path is printed.
 import csv
+import json
 import os
 import subprocess
 import time
@@ -34,6 +35,8 @@ STATE = os.path.join(STATE_DIR, "state.env")
 IPLOG = os.path.join(STATE_DIR, "ipv4.log")
 CONF = "/etc/warp-monitor.conf"
 TG_ENV = "/etc/warp-telegram.env"
+TSPU_SCRIPT = "/usr/local/sbin/tspu-check.sh"
+TSPU_JSON = os.path.join(STATE_DIR, "tspu.json")
 
 
 def sh(cmd, timeout=30):
@@ -141,21 +144,34 @@ def awg_peers():
     return active, total, best, best_peer
 
 
-def ipv4_changes(since):
-    entries = 0
+def ipv4_changes():
+    """Count IPv4 changes in the last 24h, 7 days and all time."""
+    now = int(time.time())
+    day_start = now - 86400
+    week_start = now - 7 * 86400
+    counts = {"day": 0, "week": 0, "all": 0}
+    prev = None
     try:
         with open(IPLOG, encoding="utf-8") as f:
             for line in f:
                 parts = line.split()
-                if parts:
-                    try:
-                        if int(parts[0]) >= since:
-                            entries += 1
-                    except ValueError:
-                        continue
+                if len(parts) < 3:
+                    continue
+                try:
+                    ts = int(parts[0])
+                except ValueError:
+                    continue
+                ip = parts[-1]
+                if prev is not None and ip != prev:
+                    counts["all"] += 1
+                    if ts >= day_start:
+                        counts["day"] += 1
+                    if ts >= week_start:
+                        counts["week"] += 1
+                prev = ip
     except FileNotFoundError:
         pass
-    return max(0, entries - 1) if entries else 0
+    return counts
 
 
 def local_status(cfg):
@@ -169,6 +185,7 @@ def local_status(cfg):
         uptime = "0"
     disk = sh("df --output=pcent / | tail -1 | tr -dc '0-9'") or "0"
     peers, peers_total, last_hs, last_peer = awg_peers()
+    chg = ipv4_changes()
     return {
         "name": cfg.get("SELF_NAME", "Server"),
         "ip": cfg.get("SELF_IP", ""),
@@ -183,7 +200,9 @@ def local_status(cfg):
         "total": peers_total,
         "last_hs": last_hs,
         "last_peer": last_peer,
-        "chg": ipv4_changes(time.time() - 86400),
+        "chg": chg["day"],
+        "chg7": chg["week"],
+        "chg_all": chg["all"],
     }
 
 
@@ -200,7 +219,7 @@ echo "ONL=$(printf '%s\n' "$D" | awk -v now=$(date +%s) 'NF==9 && $6>0 && (now-$
 echo "TOT=$(printf '%s\n' "$D" | awk 'NF==9 {c++} END{print c+0}')"
 echo "HS=$(printf '%s\n' "$D" | awk 'NF==9 && $6>0 && $6>m {m=$6} END{print m+0}')"
 echo "HSP=$(printf '%s\n' "$D" | awk 'NF==9 && $6>0 && $6>m {m=$6; p=$5} END{print (p?p:"-")}')"
-echo "CHG=$(n=$(awk -v t=$(($(date +%s)-86400)) '$1>=t' /var/lib/warp-monitor/ipv4.log 2>/dev/null | wc -l); echo $(( n > 0 ? n - 1 : 0 )))"
+echo "CHG=$(awk -v now=$(date +%s) 'NF>=3 { ip=$NF; ts=$1+0; if (prev != "" && ip != prev) { all++; if (ts >= now-86400) day++; if (ts >= now-604800) week++ } prev=ip } END { printf "%d %d %d", day+0, week+0, all+0 }' /var/lib/warp-monitor/ipv4.log 2>/dev/null)"
 """
 
 
@@ -223,6 +242,8 @@ def peer_status(cfg):
         "last_hs": 0,
         "last_peer": "-",
         "chg": 0,
+        "chg7": 0,
+        "chg_all": 0,
         "ssh": False,
     }
     if not data["online"]:
@@ -259,7 +280,9 @@ def peer_status(cfg):
         elif k == "HSP":
             data["last_peer"] = v or "-"
         elif k == "CHG":
-            data["chg"] = int(v or 0)
+            parts = v.split()
+            if len(parts) == 3:
+                data["chg"], data["chg7"], data["chg_all"] = (int(x or 0) for x in parts)
     return data
 
 
@@ -341,8 +364,12 @@ def online_label(st):
 
 
 def ipv4_label(st):
-    n = st.get("chg", 0)
-    return f"{st['warp4']} · {n} {plural(n, 'смена', 'смены', 'смен')}"
+    return st["warp4"]
+
+
+def changes_label(st):
+    return (f"24ч {st.get('chg', 0)} · 7д {st.get('chg7', 0)} · "
+            f"всё {st.get('chg_all', 0)}")
 
 
 def activity_label(st):
@@ -356,6 +383,7 @@ def server_lines(st, color_missing):
         ("WARP", "Connected" if st["warp_ok"] else "Disconnected",
          GREEN if st["warp_ok"] else RED),
         ("IPv4", ipv4_label(st), WHITE),
+        ("Смены IPv4", changes_label(st), WHITE),
         ("IPv6", st["warp6"][:26] + ("…" if len(st["warp6"]) > 26 else ""), WHITE),
         ("Онлайн", online_label(st), GREEN if st["peers"] else MUTED),
         ("Amnezia", st["amnezia"], GREEN if "amnezia" in st["amnezia"] else color_missing),
@@ -392,6 +420,7 @@ def build_dashboard(cfg, me, peer, history, state):
                 ("Состояние", "недоступен", RED),
                 ("Простой", down_label, AMBER),
                 ("Порт 22", "нет ответа", RED),
+                ("Смены IPv4", "—", MUTED),
                 ("Онлайн", "—", MUTED),
                 ("Amnezia", "—", MUTED),
                 ("Диск", "—", MUTED),
@@ -512,11 +541,63 @@ def server_caption(st, dot="🟢"):
         return f"🔴 <b>{st['name']}</b>: недоступен"
     text = (f"{dot} <b>{st['name']}</b>: WARP {'on' if st['warp_ok'] else 'off'}, "
             f"IPv4 <code>{st['warp4']}</code>{online_suffix(st)}")
-    if st.get("chg"):
-        text += f" · 🔄 {st['chg']}"
+    if st.get("chg") or st.get("chg7") or st.get("chg_all"):
+        text += f" · 🔄 {st.get('chg', 0)}/{st.get('chg7', 0)}/{st.get('chg_all', 0)}"
     if st.get("last_hs"):
         text += f" · 🕒 {human_age(time.time() - st['last_hs'])}"
     return text
+
+
+def tspu_status(cfg):
+    """Return a human-readable TSPU section for the Telegram caption."""
+    if cfg.get("TSPU_ENABLE", "0") != "1":
+        return ""
+    if not os.path.exists(TSPU_SCRIPT):
+        return "🛡 <b>ТСПУ</b>: скрипт не установлен"
+    sh(f"{TSPU_SCRIPT} --fresh", timeout=200)
+    try:
+        with open(TSPU_JSON, encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return "🛡 <b>ТСПУ</b>: нет данных (проверка не удалась)"
+    results = data.get("results") or []
+    if not results:
+        return "🛡 <b>ТСПУ</b>: нет результатов"
+
+    names = {
+        cfg.get("SELF_IP"): cfg.get("SELF_NAME", "Server"),
+        cfg.get("PEER_IP"): cfg.get("PEER_NAME", "Peer"),
+        cfg.get("SERVER1_IP"): cfg.get("SERVER1_NAME", "Server 1"),
+        cfg.get("SERVER2_IP"): cfg.get("SERVER2_NAME", "Server 2"),
+    }
+    lines = ["🛡 <b>ТСПУ</b>"]
+    for item in results:
+        ip = item.get("ip", "?")
+        name = names.get(ip) or ip
+        status = item.get("status")
+        detail = (item.get("detail") or "").strip()
+        if status == "blocked":
+            mark = "🔴 заблокирован"
+        elif status == "not_blocked":
+            mark = "✅ не заблокирован"
+        else:
+            mark = f"⚪ {status or 'неизвестно'}"
+        line = f"{name}: {mark}"
+        if detail:
+            line += f" — {detail}"
+        lines.append(line)
+
+    meta = []
+    if data.get("source"):
+        meta.append(data["source"])
+    hop = data.get("dpi_hop")
+    if hop not in (None, 0, "0"):
+        meta.append(f"DPI hop {hop}")
+    if meta:
+        lines.append(f"<i>{'; '.join(meta)}</i>")
+    if not cfg.get("TSPU_PROBE_HOST"):
+        lines.append("<i>Локальная проверка: российский ТСПУ виден только из сети РФ.</i>")
+    return "\n".join(lines)
 
 
 def main():
@@ -538,9 +619,12 @@ def main():
     )
     if peer is not None:
         caption += f"{server_caption(peer)}\n"
+    tspu = tspu_status(cfg)
+    if tspu:
+        caption += tspu + "\n"
     caption += (
         f"💾 Диск: {me['disk']}% · Amnezia: {'ok' if 'amnezia' in me['amnezia'] else 'нет'}\n"
-        f"<i>👥 онлайн Amnezia · 🔄 смены IPv4 за 24ч · 🕒 последнее рукопожатие</i>"
+        f"<i>👥 онлайн Amnezia · 🔄 смены IPv4: 24ч / 7д / всё · 🕒 последнее рукопожатие</i>"
     )
 
     if not token or not chat:

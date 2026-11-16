@@ -26,6 +26,7 @@ HIST_HEADER="ts,peer_ok,peer_ms,warp_ok,awg_ok,disk,peers,total,warp4"
 PEER_FAIL=${PEER_FAIL:-0}
 PEER_ALERT=${PEER_ALERT:-0}
 PEER_SINCE=${PEER_SINCE:-0}
+PEER_LAST_NOTICE=${PEER_LAST_NOTICE:-0}
 WARP_FAIL=${WARP_FAIL:-0}
 WARP_ALERT=${WARP_ALERT:-0}
 AWG_FAIL=${AWG_FAIL:-0}
@@ -46,6 +47,56 @@ tg() {
         --data-urlencode "chat_id=${TG_CHAT}" \
         --data-urlencode "parse_mode=HTML" \
         --data-urlencode "text=$1" >/dev/null 2>&1 || true
+}
+
+# --- diagnostics for an unreachable peer -------------------------------------
+tcp_probe() {
+    timeout 4 bash -c "exec 3<>/dev/tcp/$1/$2" 2>/dev/null
+}
+
+icmp_probe() {
+    ping -c 2 -W 2 "$1" >/dev/null 2>&1
+}
+
+diagnose_peer() {
+    local ip="$1"
+    local p80=0 p443=0 icmp=0 trace_last="" tspu="" diag="" label="ТСПУ"
+    tcp_probe "$ip" 80 && p80=1
+    tcp_probe "$ip" 443 && p443=1
+    icmp_probe "$ip" && icmp=1
+
+    if command -v traceroute >/dev/null 2>&1; then
+        trace_last=$(timeout 25 traceroute -T -p 22 -m 12 -w 2 -q 1 "$ip" 2>/dev/null \
+            | awk 'NR > 1 && $0 !~ /^[[:space:]]*$/ { last = $0 } END { print last }')
+    fi
+
+    if [ "${TSPU_ENABLE:-0}" = "1" ] && [ -x /usr/local/sbin/tspu-check.sh ]; then
+        [ -n "${TSPU_PROBE_HOST:-}" ] && label="ТСПУ (точка РФ)" || label="ТСПУ (локально)"
+        tspu=$(timeout 110 /usr/local/sbin/tspu-check.sh --target "$ip" --fresh 2>/dev/null \
+            | awk -F'\t' -v ip="$ip" '$1 == ip { print $2 "\t" $3; exit }')
+    fi
+
+    if [ "$p443" -eq 1 ] || [ "$p80" -eq 1 ]; then
+        diag="сервер жив: порт 443/80 отвечает, но SSH/22 недоступен"
+    elif [ "$icmp" -eq 1 ]; then
+        diag="ICMP отвечает, TCP-порты 22/80/443 молчат — фильтрация или перегрузка"
+    elif [ -n "$trace_last" ]; then
+        diag="пакеты не доходят; трассировка: ${trace_last}"
+    else
+        diag="нет ответа ни по ICMP, ни по TCP"
+    fi
+
+    if [ -n "$tspu" ]; then
+        local status="${tspu%%$'\t'*}"
+        local detail="${tspu#*$'\t'}"
+        if [ "$status" = "blocked" ]; then
+            diag="${label}: ${detail}"
+        else
+            diag="${diag}; ${label}: блокировка не обнаружена"
+        fi
+    fi
+
+    printf '%s' "$diag" | tr '\n' ' '
 }
 
 # --- history file + schema migration (older files had 6 columns) -------------
@@ -132,17 +183,40 @@ if [ -n "$PEER_IP" ] && [ "$peer_ok" -eq 0 ]; then
         mins=$(( (now - PEER_SINCE) / 60 ))
         tg "🔴 <b>Сервер недоступен</b>
 <code>${PEER_NAME} (${PEER_IP})</code>
-Нет ответа уже ${mins} мин."
+Нет ответа уже ${mins} мин. Проверяю причину…"
+        diag=$(diagnose_peer "$PEER_IP")
+        printf '%s\n' "$diag" > "$STATE_DIR/peer-last-diag.txt"
+        tg "🔎 <b>Почему недоступен ${PEER_NAME}</b>
+${diag}"
         PEER_ALERT=1
+        PEER_LAST_NOTICE=$now
+    elif [ "$PEER_ALERT" -eq 1 ] && [ $((now - PEER_LAST_NOTICE)) -ge 1800 ]; then
+        mins=$(( (now - PEER_SINCE) / 60 ))
+        diag=$(diagnose_peer "$PEER_IP")
+        printf '%s\n' "$diag" > "$STATE_DIR/peer-last-diag.txt"
+        tg "⏱ <b>${PEER_NAME} всё ещё недоступен</b>
+Простой: ~${mins} мин.
+${diag}"
+        PEER_LAST_NOTICE=$now
     fi
 else
     if [ "$PEER_ALERT" -eq 1 ]; then
         mins=$(( (now - PEER_SINCE) / 60 ))
-        tg "🟢 <b>Сервер снова доступен</b>
+        diag=""
+        [ -f "$STATE_DIR/peer-last-diag.txt" ] && diag=$(cat "$STATE_DIR/peer-last-diag.txt" 2>/dev/null)
+        if [ -n "$diag" ]; then
+            tg "🟢 <b>Сервер снова доступен</b>
+<code>${PEER_NAME} (${PEER_IP})</code>
+Простой: ~${mins} мин.
+Причина: ${diag}"
+        else
+            tg "🟢 <b>Сервер снова доступен</b>
 <code>${PEER_NAME} (${PEER_IP})</code>
 Простой: ~${mins} мин."
+        fi
+        rm -f "$STATE_DIR/peer-last-diag.txt"
     fi
-    PEER_FAIL=0; PEER_ALERT=0; PEER_SINCE=0
+    PEER_FAIL=0; PEER_ALERT=0; PEER_SINCE=0; PEER_LAST_NOTICE=0
 fi
 
 # --- local WARP alert --------------------------------------------------------
@@ -199,9 +273,9 @@ fi
 # --- bypass route health: replies (SSH, Caddy, AWG) must never enter WARP ----
 if [ "$warp_ok" -eq 1 ] && [ -n "$BYPASS_MARK" ]; then
     if ip route get 1.1.1.1 mark "$BYPASS_MARK" 2>/dev/null | grep -q "CloudflareWARP"; then
-        # WARP inserted its own ip rule above ours: move ours to the top and retry
-        ip rule del priority 100 fwmark "$BYPASS_MARK" lookup main 2>/dev/null || true
-        ip rule add priority 10 fwmark "$BYPASS_MARK" lookup main 2>/dev/null || true
+        # WARP moved its own ip rule above ours: re-apply the routing script,
+        # which places the bypass rule above WARP's current priority.
+        /usr/local/sbin/warp-amnezia-routing.sh >/dev/null 2>&1 || true
     fi
     if ip route get 1.1.1.1 mark "$BYPASS_MARK" 2>/dev/null | grep -q "CloudflareWARP"; then
         ROUTE_FAIL=$((ROUTE_FAIL + 1))
@@ -226,6 +300,7 @@ tmp="$STATE.tmp"
     echo "PEER_FAIL=$PEER_FAIL"
     echo "PEER_ALERT=$PEER_ALERT"
     echo "PEER_SINCE=$PEER_SINCE"
+    echo "PEER_LAST_NOTICE=$PEER_LAST_NOTICE"
     echo "WARP_FAIL=$WARP_FAIL"
     echo "WARP_ALERT=$WARP_ALERT"
     echo "AWG_FAIL=$AWG_FAIL"

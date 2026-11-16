@@ -61,7 +61,7 @@ SSH, Caddy 80/443 и UDP-транспорт Amnezia помечаются `fwmark
 
 ```bash
 apt update && apt upgrade -y
-apt install -y curl iptables python3 python3-matplotlib openssh-client ca-certificates gnupg lsb-release
+apt install -y curl iptables python3 python3-matplotlib openssh-client ca-certificates gnupg lsb-release perl traceroute
 ```
 
 Проверьте, что виден физический интерфейс и шлюз:
@@ -189,6 +189,8 @@ sudo ./install.sh --install-deps
 ```bash
 sudo ./install.sh --dry-run
 ```
+
+Для проверки блокировок ТСПУ добавьте `--tspu` (локальная проверка) или `--tspu-probe root@ru-vps` (проверка с российской точки). Подробнее — в [TELEGRAM.md](TELEGRAM.md#проверка-тспу).
 
 ### 4.3. Два сервера
 

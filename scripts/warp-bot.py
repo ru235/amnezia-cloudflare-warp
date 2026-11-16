@@ -13,6 +13,8 @@ from datetime import datetime
 CFG_PATH = "/etc/warp-monitor.conf"
 TG_PATH = "/etc/warp-telegram.env"
 KEY = "/root/.ssh/id_ed25519_monitor"
+TSPU_SCRIPT = "/usr/local/sbin/tspu-check.sh"
+TSPU_JSON = "/var/lib/warp-monitor/tspu.json"
 
 
 def load_env(path):
@@ -59,7 +61,7 @@ echo "ONL=$(printf '%s\n' "$D" | awk -v now=$(date +%s) 'NF==9 && $6>0 && (now-$
 echo "TOT=$(printf '%s\n' "$D" | awk 'NF==9 {c++} END{print c+0}')"
 echo "HS=$(printf '%s\n' "$D" | awk 'NF==9 && $6>0 && $6>m {m=$6} END{print m+0}')"
 echo "HSP=$(printf '%s\n' "$D" | awk 'NF==9 && $6>0 && $6>m {m=$6; p=$5} END{print (p?p:"-")}')"
-echo "CHG=$(n=$(awk -v t=$(($(date +%s)-86400)) '$1>=t' /var/lib/warp-monitor/ipv4.log 2>/dev/null | wc -l); echo $(( n > 0 ? n - 1 : 0 )))"
+echo "CHG=$(awk -v now=$(date +%s) 'NF>=3 { ip=$NF; ts=$1+0; if (prev != "" && ip != prev) { all++; if (ts >= now-86400) day++; if (ts >= now-604800) week++ } prev=ip } END { printf "%d %d %d", day+0, week+0, all+0 }' /var/lib/warp-monitor/ipv4.log 2>/dev/null)"
 """
 
 
@@ -69,6 +71,14 @@ def sh(cmd, timeout=20):
                               timeout=timeout).stdout.strip()
     except Exception:
         return ""
+
+
+def run_rc(cmd, timeout=10):
+    try:
+        return subprocess.run(cmd, shell=True, capture_output=True,
+                              timeout=timeout).returncode
+    except Exception:
+        return 255
 
 
 def tcp_ok(ip, port=22, timeout=3):
@@ -139,22 +149,144 @@ def awg_peers():
 
 
 def ipv4_changes():
-    since = time.time() - 86400
-    n = 0
+    """Count IPv4 changes in the last 24h, 7 days and all time."""
+    now = int(time.time())
+    counts = {"day": 0, "week": 0, "all": 0}
+    prev = None
     try:
         with open("/var/lib/warp-monitor/ipv4.log", encoding="utf-8") as f:
             for line in f:
                 parts = line.split()
-                if not parts:
+                if len(parts) < 3:
                     continue
                 try:
-                    if int(parts[0]) >= since:
-                        n += 1
+                    ts = int(parts[0])
                 except ValueError:
                     continue
+                ip = parts[-1]
+                if prev is not None and ip != prev:
+                    counts["all"] += 1
+                    if ts >= now - 86400:
+                        counts["day"] += 1
+                    if ts >= now - 604800:
+                        counts["week"] += 1
+                prev = ip
     except FileNotFoundError:
-        return 0
-    return max(0, n - 1)
+        pass
+    return counts
+
+
+def tspu_cached_read():
+    """Read the last tspu-check result without running a new check."""
+    try:
+        with open(TSPU_JSON, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def tspu_data(cached=True, target=None):
+    """Run tspu-check.sh and return the parsed result, or None."""
+    if CFG.get("TSPU_ENABLE", "0") != "1":
+        return None
+    if not os.path.exists(TSPU_SCRIPT):
+        return None
+    cmd = f"{TSPU_SCRIPT} {'--cached' if cached else '--fresh'}"
+    if target:
+        cmd += f" --target {target}"
+    sh(cmd, timeout=200)
+    return tspu_cached_read()
+
+
+def tspu_label(ip, data):
+    if not data:
+        return ""
+    item = next((x for x in (data.get("results") or []) if x.get("ip") == ip), None)
+    if not item:
+        return ""
+    status = item.get("status")
+    if status == "blocked":
+        mark = "🔴 заблокирован"
+    elif status == "not_blocked":
+        mark = "✅ не заблокирован"
+    else:
+        mark = f"⚪ {status or 'неизвестно'}"
+    detail = (item.get("detail") or "").strip()
+    return f"{mark} — {detail}" if detail else mark
+
+
+def tspu_text():
+    if CFG.get("TSPU_ENABLE", "0") != "1":
+        return ("🛡 <b>Проверка ТСПУ выключена</b>\n"
+                "Включите <code>TSPU_ENABLE=1</code> в /etc/warp-monitor.conf.")
+    data = tspu_data(cached=True)
+    if not data:
+        return ("🛡 <b>Проверка ТСПУ</b>\n"
+                "Нет данных: проверка не запускалась или завершилась ошибкой.")
+    results = data.get("results") or []
+    if not results:
+        return "🛡 <b>Проверка ТСПУ</b>\nРезультатов нет."
+    names = {
+        CFG.get("SELF_IP"): CFG.get("SELF_NAME", "Server"),
+        CFG.get("PEER_IP"): CFG.get("PEER_NAME", "Peer"),
+        CFG.get("SERVER1_IP"): CFG.get("SERVER1_NAME", "Server 1"),
+        CFG.get("SERVER2_IP"): CFG.get("SERVER2_NAME", "Server 2"),
+    }
+    lines = ["🛡 <b>Проверка ТСПУ</b>\n"]
+    for item in results:
+        ip = item.get("ip", "?")
+        name = names.get(ip) or ip
+        lines.append(f"<b>{name}</b> · <code>{ip}</code>\n{tspu_label(ip, data)}")
+    meta = []
+    if data.get("source"):
+        meta.append(data["source"])
+    hop = data.get("dpi_hop")
+    if hop not in (None, 0, "0"):
+        meta.append(f"DPI hop {hop}")
+    if meta:
+        lines.append(f"<i>{'; '.join(meta)}</i>")
+    if not CFG.get("TSPU_PROBE_HOST"):
+        lines.append("<i>Локальная проверка: российский ТСПУ виден только из сети РФ.</i>")
+    return "\n\n".join(lines)
+
+
+def diagnose_peer(ip):
+    """Short server-side diagnosis for an unreachable peer."""
+    p22 = run_rc(f"timeout 4 bash -c 'exec 3<>/dev/tcp/{ip}/22'", 6) == 0
+    p80 = run_rc(f"timeout 4 bash -c 'exec 3<>/dev/tcp/{ip}/80'", 6) == 0
+    p443 = run_rc(f"timeout 4 bash -c 'exec 3<>/dev/tcp/{ip}/443'", 6) == 0
+    icmp = run_rc(f"ping -c 2 -W 2 {ip}", 8) == 0
+    trace = sh(f"traceroute -T -p 22 -m 12 -w 2 -q 1 {ip} 2>/dev/null", 30)
+    trace_last = ""
+    for line in trace.splitlines()[1:]:
+        if line.strip():
+            trace_last = line.strip()
+
+    if p443 or p80:
+        verdict = "сервер жив: порт 443/80 отвечает, но SSH/22 недоступен"
+    elif icmp:
+        verdict = "ICMP отвечает, TCP-порты молчат — фильтрация или перегрузка"
+    elif trace_last:
+        verdict = f"пакеты не доходят; трассировка: {trace_last}"
+    else:
+        verdict = "нет ответа ни по ICMP, ни по TCP"
+
+    details = [
+        f"Порт 22: {'открыт' if p22 else 'нет ответа'}",
+        f"Порт 443: {'открыт' if p443 else 'нет ответа'}",
+        f"ICMP: {'отвечает' if icmp else 'нет ответа'}",
+    ]
+    if trace_last:
+        details.append(f"Трассировка: {trace_last}")
+
+    if CFG.get("TSPU_ENABLE", "0") == "1":
+        data = tspu_data(cached=False, target=ip)
+        label = tspu_label(ip, data)
+        if label:
+            where = "точка РФ" if CFG.get("TSPU_PROBE_HOST") else "локально"
+            details.append(f"ТСПУ ({where}): {label}")
+
+    return "Вывод: " + verdict + "\n" + "\n".join(details)
 
 
 def local_status(name, ip):
@@ -167,6 +299,7 @@ def local_status(name, ip):
     except Exception:
         uptime = "0"
     peers, peers_total, last_hs, last_peer = awg_peers()
+    chg = ipv4_changes()
     return {
         "name": name, "ip": ip, "online": True, "ssh": True,
         "warp_ok": warp_ok,
@@ -179,7 +312,9 @@ def local_status(name, ip):
         "total": peers_total,
         "last_hs": last_hs,
         "last_peer": last_peer,
-        "chg": ipv4_changes(),
+        "chg": chg["day"],
+        "chg7": chg["week"],
+        "chg_all": chg["all"],
     }
 
 
@@ -188,7 +323,8 @@ def peer_status(name, ip):
         "name": name, "ip": ip, "online": False, "ssh": False,
         "warp_ok": False, "warp4": "—", "warp6": "—",
         "amnezia": "—", "disk": 0, "uptime": "—",
-        "peers": 0, "total": 0, "last_hs": 0, "last_peer": "-", "chg": 0,
+        "peers": 0, "total": 0, "last_hs": 0, "last_peer": "-",
+        "chg": 0, "chg7": 0, "chg_all": 0,
     }
     if not tcp_ok(ip):
         return data
@@ -226,7 +362,9 @@ def peer_status(name, ip):
         elif k == "HSP":
             data["last_peer"] = v or "-"
         elif k == "CHG":
-            data["chg"] = int(v or 0)
+            parts = v.split()
+            if len(parts) == 3:
+                data["chg"], data["chg7"], data["chg_all"] = (int(x or 0) for x in parts)
     return data
 
 
@@ -292,7 +430,8 @@ def main_kb():
     for i in range(0, len(nav), 2):
         rows.append(nav[i:i + 2])
     rows.append([{"text": "🌐 WARP", "callback_data": "warp"},
-                 {"text": "📡 Ping", "callback_data": "ping"}])
+                 {"text": "📡 Ping", "callback_data": "ping"},
+                 {"text": "🛡 ТСПУ", "callback_data": "tspu"}])
     return {"inline_keyboard": rows}
 
 
@@ -336,13 +475,17 @@ def status_text():
 def detail_text(s):
     st = get_server(s)
     if not st["online"]:
+        diag = diagnose_peer(s["ip"])
         return (f"🖥 <b>{s['name']}</b>\n<code>{s['ip']}</code>\n\n"
                 f"🔴 <b>недоступен</b>\nПорт 22: нет ответа\n\n"
+                f"{diag}\n\n"
                 f"<i>Ротация IPv6: {s['rotate']}</i>")
     if not st.get("ssh", True):
         return (f"🖥 <b>{s['name']}</b>\n<code>{s['ip']}</code>\n\n"
                 f"🟡 онлайн, но метрики по SSH недоступны\n\n"
                 f"<i>Ротация IPv6: {s['rotate']}</i>")
+    tspu = tspu_label(s["ip"], tspu_cached_read())
+    tspu_line = f"\n🛡 ТСПУ: <b>{tspu}</b>" if tspu else ""
     return (
         f"🖥 <b>{s['name']}</b>\n<code>{s['ip']}</code>\n\n"
         f"WARP: <b>{'Connected' if st['warp_ok'] else 'Disconnected'}</b>\n"
@@ -351,9 +494,10 @@ def detail_text(s):
         f"Amnezia: <b>{st['amnezia']}</b>\n"
         f"👥 Онлайн: <b>{online_str(st)}</b>\n"
         f"🕒 Последний клиент: <b>{activity_str(st)}</b>\n"
-        f"🔄 Смены IPv4: <b>{st['chg']}</b> за 24ч\n"
+        f"🔄 Смены IPv4: <b>{st.get('chg', 0)}</b> за 24ч · "
+        f"<b>{st.get('chg7', 0)}</b> за 7д · <b>{st.get('chg_all', 0)}</b> всего\n"
         f"Диск: <b>{st['disk']}%</b>\n"
-        f"Uptime: {st['uptime']}\n\n"
+        f"Uptime: {st['uptime']}{tspu_line}\n\n"
         f"<i>Ротация IPv6: {s['rotate']}</i>"
     )
 
@@ -367,7 +511,9 @@ def warp_text():
                          f"{'🟢 Connected' if st['warp_ok'] else '🔴 Disconnected'}\n"
                          f"IPv4 <code>{st['warp4']}</code>\n"
                          f"IPv6 <code>{st['warp6']}</code>\n"
-                         f"🔄 смен IPv4 за 24ч: <b>{st['chg']}</b>")
+                         f"🔄 смены IPv4: <b>{st.get('chg', 0)}</b> / "
+                         f"<b>{st.get('chg7', 0)}</b> / <b>{st.get('chg_all', 0)}</b> "
+                         f"(24ч / 7д / всё)")
         else:
             parts.append(f"<b>{s['name']}</b>\n⚪ нет данных")
     parts.append("<i>Смены IPv4 пишутся в журнал, IPv6 ротируется ежедневно.</i>")
@@ -414,6 +560,7 @@ def handle_message(msg):
              + "".join(f"/{s['id']} — {short_name(s)}\n" for s in SERVERS) +
              "/warp — состояние WARP\n"
              "/report — отчёт с графиком\n"
+             "/tspu — проверка блокировки ТСПУ\n"
              "/ping — задержка", back_kb())
     elif cmd == "/status":
         send(status_text(), main_kb())
@@ -424,6 +571,9 @@ def handle_message(msg):
         send(warp_text(), back_kb())
     elif cmd == "/ping":
         send(ping_text(), back_kb())
+    elif cmd == "/tspu":
+        send("🛡 Проверяю ТСПУ…")
+        send(tspu_text(), back_kb())
     elif cmd == "/report":
         send("📊 Готовлю отчёт…")
         ok, err = run_report()
@@ -449,6 +599,9 @@ def handle_callback(cb):
         edit(mid, warp_text(), back_kb())
     elif data == "ping":
         edit(mid, ping_text(), back_kb())
+    elif data == "tspu":
+        edit(mid, "🛡 Проверяю ТСПУ…")
+        edit(mid, tspu_text(), back_kb())
     elif data == "report":
         send("📊 Готовлю отчёт…")
         ok, err = run_report()
@@ -481,6 +634,7 @@ def main():
     ] + [{"command": s["id"], "description": f"Сервер {short_name(s)}"} for s in SERVERS] + [
         {"command": "warp", "description": "Состояние WARP"},
         {"command": "report", "description": "Отчёт с графиком"},
+        {"command": "tspu", "description": "Проверка блокировки ТСПУ"},
         {"command": "ping", "description": "Задержка"},
     ]
     api("setMyCommands", commands=commands)
@@ -516,6 +670,8 @@ if __name__ == "__main__":
             print(detail_text(s))
         print("\n--- warp ---")
         print(warp_text())
+        print("\n--- tspu ---")
+        print(tspu_text())
         print("\n--- ping ---")
         print(ping_text())
     else:

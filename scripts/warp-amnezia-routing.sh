@@ -37,14 +37,63 @@ if ! ip link show "$WARP_IF" >/dev/null 2>&1; then
 fi
 
 # --- policy routing ----------------------------------------------------------
-# Our bypass mark must be evaluated BEFORE WARP's own ip rule. Depending on the
-# version WARP installs it at priority 99 or 32765; with the mark falling through
-# to WARP's table 65743, replies (SSH, Caddy, AWG handshakes) get routed into the
-# tunnel and dropped as martians.
-ip rule del priority 100 fwmark "$BYPASS_MARK" lookup main 2>/dev/null || true
-ip -6 rule del priority 100 fwmark "$BYPASS_MARK" lookup main 2>/dev/null || true
-ip rule add priority "$BYPASS_PRIO" fwmark "$BYPASS_MARK" lookup main 2>/dev/null || true
-ip -6 rule add priority "$BYPASS_PRIO" fwmark "$BYPASS_MARK" lookup main 2>/dev/null || true
+# Our bypass mark must be evaluated BEFORE WARP's own ip rule. WARP has used
+# priorities 9, 99 and 32765 in different versions and can change it after a
+# reconnect. If our rule ends up below WARP's, marked replies (SSH, Caddy, AWG
+# handshakes) fall into table 65743 and the server looks unreachable from the
+# internet. Detect WARP's current priority and put our rule above it.
+WARP_TABLE="${WARP_TABLE:-65743}"
+
+rule_prios() {  # rule_prios ""|-6 -> priorities of our bypass rules
+    local family="$1"
+    ip $family rule show 2>/dev/null | awk -v mark="$BYPASS_MARK" '
+        $1 ~ /^[0-9]+:$/ {
+            prio = $1; sub(":", "", prio)
+            for (i = 2; i <= NF; i++) {
+                if ($i == "fwmark" && $(i+1) == mark &&
+                    $(i+2) == "lookup" && $(i+3) == "main") print prio
+            }
+        }'
+}
+
+warp_prio_for() {  # warp_prio_for ""|-6 -> priority of WARP's rule
+    local family="$1"
+    ip $family rule show 2>/dev/null | awk -v table="$WARP_TABLE" '
+        $1 ~ /^[0-9]+:$/ {
+            for (i = 2; i <= NF; i++) {
+                if ($i == "lookup" && $(i+1) == table) {
+                    p = $1; sub(":", "", p); print p; exit
+                }
+            }
+        }'
+}
+
+for family in "" "-6"; do
+    wp=$(warp_prio_for "$family")
+    target="$BYPASS_PRIO"
+    if [ -n "$wp" ] && [ "$wp" -le "$target" ] 2>/dev/null; then
+        target=$((wp - 1))
+        [ "$target" -lt 1 ] && target=1
+    fi
+
+    current=$(rule_prios "$family" | tr '\n' ' ')
+    case " $current " in
+        *" $target "*) : ;;  # already in place
+        *) ip $family rule add priority "$target" fwmark "$BYPASS_MARK" lookup main 2>/dev/null || true ;;
+    esac
+
+    # Drop stale rules only after the target rule is really there, so a failed
+    # add can never leave the host without its bypass route.
+    if rule_prios "$family" | grep -qx "$target"; then
+        for prio in $current; do
+            [ "$prio" = "$target" ] && continue
+            ip $family rule del priority "$prio" fwmark "$BYPASS_MARK" lookup main 2>/dev/null || true
+        done
+    else
+        echo "warning: could not place bypass rule at priority $target (${family:-ipv4})" >&2
+    fi
+    echo "policy routing (${family:-ipv4}): mark $BYPASS_MARK at priority $target (WARP rule: ${wp:-not found})"
+done
 
 add_rule() {  # add_rule <table> <chain> <args...>
     local table="$1" chain="$2"
