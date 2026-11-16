@@ -295,7 +295,9 @@ def diagnose_peer(ip):
         if line.strip():
             trace_last = line.strip()
 
-    if p443 or p80:
+    if p22 and (p80 or p443):
+        verdict = "порты 22/80/443 отвечают, но SSH-сессия не ставится — сбой sshd или перегрузка"
+    elif p443 or p80:
         verdict = "сервер жив: порт 443/80 отвечает, но SSH/22 недоступен"
     elif icmp:
         verdict = "ICMP отвечает, TCP-порты молчат — фильтрация или перегрузка"

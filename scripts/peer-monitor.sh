@@ -76,7 +76,9 @@ diagnose_peer() {
             | awk -F'\t' -v ip="$ip" '$1 == ip { print $2 "\t" $3; exit }')
     fi
 
-    if [ "$p443" -eq 1 ] || [ "$p80" -eq 1 ]; then
+    if [ "$p22" -eq 1 ] && { [ "$p80" -eq 1 ] || [ "$p443" -eq 1 ]; }; then
+        diag="порты 22/80/443 отвечают, но SSH-сессия не устанавливается — сбой sshd или перегрузка"
+    elif [ "$p443" -eq 1 ] || [ "$p80" -eq 1 ]; then
         diag="сервер жив: порт 443/80 отвечает, но SSH/22 недоступен"
     elif [ "$icmp" -eq 1 ]; then
         diag="ICMP отвечает, TCP-порты 22/80/443 молчат — фильтрация или перегрузка"
@@ -89,11 +91,11 @@ diagnose_peer() {
     if [ -n "$tspu" ]; then
         local status="${tspu%%$'\t'*}"
         local detail="${tspu#*$'\t'}"
-        if [ "$status" = "blocked" ]; then
-            diag="${label}: ${detail}"
-        else
-            diag="${diag}; ${label}: блокировка не обнаружена"
-        fi
+        case "$status" in
+            blocked)     diag="${label}: ${detail}" ;;
+            not_blocked) diag="${diag}; ${label}: блокировка не обнаружена" ;;
+            *)           diag="${diag}; ${label}: не проверено" ;;
+        esac
     fi
 
     printf '%s' "$diag" | tr '\n' ' '

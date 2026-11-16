@@ -153,6 +153,7 @@ with open(txt_path, "w", encoding="utf-8") as f:
     for item in results:
         f.write(f"{item['ip']}\tunknown\t{reason}\n")
 PY
+    cat "$OUT_TXT"
     exit 2
 fi
 
