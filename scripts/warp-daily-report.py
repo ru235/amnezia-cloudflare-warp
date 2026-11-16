@@ -512,7 +512,7 @@ def build_dashboard(cfg, me, peer, history, state):
 
 def send_photo(token, chat, path, caption):
     return subprocess.run([
-        "curl", "-s", "--max-time", "90", "-X", "POST",
+        "curl", "-4", "-s", "--max-time", "90", "-X", "POST",
         f"https://api.telegram.org/bot{token}/sendPhoto",
         "-F", f"chat_id={chat}",
         "-F", f"photo=@{path}",
@@ -523,7 +523,7 @@ def send_photo(token, chat, path, caption):
 
 def send_text(token, chat, text):
     return subprocess.run([
-        "curl", "-s", "--max-time", "30", "-X", "POST",
+        "curl", "-4", "-s", "--max-time", "30", "-X", "POST",
         f"https://api.telegram.org/bot{token}/sendMessage",
         "--data-urlencode", f"chat_id={chat}",
         "--data-urlencode", "parse_mode=HTML",

@@ -433,6 +433,12 @@ def api(method, **params):
         f"https://api.telegram.org/bot{TOKEN}/{method}",
         data=data, headers={"Content-Type": "application/json"},
     )
+    # Telegram API is reached over IPv4: on some hosts IPv6 to api.telegram.org
+    # is broken and the first request hangs for ~15s before falling back.
+    orig_getaddrinfo = socket.getaddrinfo
+    def _ipv4_only(host, port, family=0, type=0, proto=0, flags=0):
+        return orig_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
+    socket.getaddrinfo = _ipv4_only
     try:
         with urllib.request.urlopen(req, timeout=45) as resp:
             return json.loads(resp.read().decode("utf-8"))
@@ -448,6 +454,8 @@ def api(method, **params):
     except Exception as e:
         print(f"API error: {e}", flush=True)
         return {"ok": False}
+    finally:
+        socket.getaddrinfo = orig_getaddrinfo
 
 
 def send(text, kb=None):
