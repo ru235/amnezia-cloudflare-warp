@@ -571,6 +571,7 @@ def tspu_status(cfg):
         cfg.get("SERVER2_IP"): cfg.get("SERVER2_NAME", "Server 2"),
     }
     lines = ["🛡 <b>ТСПУ</b>"]
+    unknown_reason = ""
     for item in results:
         ip = item.get("ip", "?")
         name = names.get(ip) or ip
@@ -580,6 +581,10 @@ def tspu_status(cfg):
             mark = "🔴 заблокирован"
         elif status == "not_blocked":
             mark = "✅ не заблокирован"
+        elif status == "unknown":
+            mark = "⚪ не проверено"
+            unknown_reason = unknown_reason or detail
+            detail = ""
         else:
             mark = f"⚪ {status or 'неизвестно'}"
         line = f"{name}: {mark}"
@@ -595,7 +600,9 @@ def tspu_status(cfg):
         meta.append(f"DPI hop {hop}")
     if meta:
         lines.append(f"<i>{'; '.join(meta)}</i>")
-    if not cfg.get("TSPU_PROBE_HOST"):
+    if unknown_reason:
+        lines.append(f"<i>{unknown_reason}</i>")
+    elif not cfg.get("TSPU_PROBE_HOST"):
         lines.append("<i>Локальная проверка: российский ТСПУ виден только из сети РФ.</i>")
     return "\n".join(lines)
 

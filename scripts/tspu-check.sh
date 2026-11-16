@@ -108,7 +108,42 @@ else
 fi
 
 if [ -z "$raw" ]; then
-    echo "TSPU check failed (exit $rc)" >&2
+    reason="проверка не удалась (код $rc)"
+    if [ -z "$PROBE_HOST" ]; then
+        reason="нужна точка в РФ: локально DPI не виден (задайте TSPU_PROBE_HOST)"
+    fi
+    [ "$QUIET" -eq 1 ] || echo "tspu-check: $reason" >&2
+    python3 - "$OUT_JSON" "$OUT_TXT" "$source_desc" "$rc" "$targets" "$reason" <<'PY'
+import json
+import sys
+import time
+
+json_path, txt_path, source, rc, targets, reason = sys.argv[1:7]
+
+ips = []
+for chunk in targets.split(","):
+    chunk = chunk.strip()
+    if not chunk:
+        continue
+    ips.append(chunk)
+
+results = [
+    {"ip": ip, "status": "unknown", "detail": reason}
+    for ip in ips
+]
+norm = {
+    "ts": int(time.time()),
+    "source": source,
+    "exit_code": int(rc),
+    "error": reason,
+    "results": results,
+}
+with open(json_path, "w", encoding="utf-8") as f:
+    json.dump(norm, f, ensure_ascii=False, indent=1)
+with open(txt_path, "w", encoding="utf-8") as f:
+    for item in results:
+        f.write(f"{item['ip']}\tunknown\t{reason}\n")
+PY
     exit 2
 fi
 
@@ -123,7 +158,18 @@ try:
     with open(raw_path, encoding="utf-8") as f:
         data = json.load(f)
 except Exception as exc:
-    sys.exit(f"cannot parse tspu-check JSON: {exc}")
+    reason = f"не удалось разобрать ответ tspu-check: {exc}"
+    norm = {
+        "ts": int(time.time()),
+        "source": source,
+        "exit_code": int(rc),
+        "error": reason,
+        "results": [],
+    }
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(norm, f, ensure_ascii=False, indent=1)
+    open(txt_path, "w", encoding="utf-8").close()
+    sys.exit(0)
 
 results = data.get("results") or []
 norm = {

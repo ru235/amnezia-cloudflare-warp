@@ -209,6 +209,8 @@ def tspu_label(ip, data):
         mark = "🔴 заблокирован"
     elif status == "not_blocked":
         mark = "✅ не заблокирован"
+    elif status == "unknown":
+        return "⚪ не проверено"
     else:
         mark = f"⚪ {status or 'неизвестно'}"
     detail = (item.get("detail") or "").strip()
@@ -233,10 +235,16 @@ def tspu_text():
         CFG.get("SERVER2_IP"): CFG.get("SERVER2_NAME", "Server 2"),
     }
     lines = ["🛡 <b>Проверка ТСПУ</b>\n"]
+    unknown_reason = ""
     for item in results:
         ip = item.get("ip", "?")
         name = names.get(ip) or ip
-        lines.append(f"<b>{name}</b> · <code>{ip}</code>\n{tspu_label(ip, data)}")
+        if item.get("status") == "unknown":
+            unknown_reason = unknown_reason or (item.get("detail") or "").strip()
+            body = "⚪ не проверено"
+        else:
+            body = tspu_label(ip, data)
+        lines.append(f"<b>{name}</b> · <code>{ip}</code>\n{body}")
     meta = []
     if data.get("source"):
         meta.append(data["source"])
@@ -245,7 +253,9 @@ def tspu_text():
         meta.append(f"DPI hop {hop}")
     if meta:
         lines.append(f"<i>{'; '.join(meta)}</i>")
-    if not CFG.get("TSPU_PROBE_HOST"):
+    if unknown_reason:
+        lines.append(f"<i>{unknown_reason}</i>")
+    elif not CFG.get("TSPU_PROBE_HOST"):
         lines.append("<i>Локальная проверка: российский ТСПУ виден только из сети РФ.</i>")
     return "\n\n".join(lines)
 
