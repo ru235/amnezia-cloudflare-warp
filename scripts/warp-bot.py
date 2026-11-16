@@ -2,6 +2,7 @@
 # Telegram control bot. Requires /etc/warp-telegram.env with TG_TOKEN and TG_CHAT.
 import json
 import os
+import shlex
 import socket
 import subprocess
 import sys
@@ -36,6 +37,10 @@ TG = load_env(TG_PATH)
 TOKEN = TG.get("TG_TOKEN", "")
 CHAT = str(TG.get("TG_CHAT", ""))
 SELF_IP = CFG.get("SELF_IP", "")
+SELF_NAME = CFG.get("SELF_NAME", "Server")
+PEER_IP = CFG.get("PEER_IP", "")
+PEER_NAME = CFG.get("PEER_NAME", "Peer")
+BOT_ROLE = CFG.get("BOT_ROLE", "active")
 
 SERVERS = []
 if CFG.get("SERVER1_IP"):
@@ -461,6 +466,73 @@ def edit(mid, text, kb=None):
     return api("editMessageText", **params)
 
 
+def peer_ssh(cmd, timeout=20):
+    """Run a command on the peer server over SSH. Returns stdout (str)."""
+    if not PEER_IP or not os.path.exists(KEY):
+        return ""
+    base = (f"ssh -i {KEY} -o BatchMode=yes -o ConnectTimeout=6 "
+            f"-o StrictHostKeyChecking=accept-new root@{PEER_IP}")
+    return sh(f"{base} {shlex.quote(cmd)}", timeout=timeout)
+
+
+def switch_primary():
+    """Move the active bot (and the 'primary server' role) to the other server.
+
+    Returns a human-readable result string. When this server was active, it
+    schedules its own warp-bot.service to stop after returning.
+    """
+    if not PEER_IP:
+        return "❌ PEER_IP не задан — переключение невозможно."
+    if not os.path.exists(KEY):
+        return "❌ Нет SSH-ключа к peer (/root/.ssh/id_ed25519_monitor)."
+    if not tcp_ok(PEER_IP):
+        return f"❌ Peer {PEER_NAME} ({PEER_IP}) недоступен по сети."
+
+    self_active = (BOT_ROLE == "active")
+
+    if self_active:
+        peer_cmds = [
+            'sed -i \'s/^BOT_ROLE=.*/BOT_ROLE="active"/\' /etc/warp-monitor.conf',
+            'grep -q \'^BOT_ROLE=\' /etc/warp-monitor.conf || echo \'BOT_ROLE="active"\' >> /etc/warp-monitor.conf',
+            'systemctl disable --now bot-guard.timer >/dev/null 2>&1 || true',
+            'systemctl enable --now warp-bot.service',
+        ]
+        self_cmds = [
+            'sed -i \'s/^BOT_ROLE=.*/BOT_ROLE="passive"/\' /etc/warp-monitor.conf',
+            'grep -q \'^BOT_ROLE=\' /etc/warp-monitor.conf || echo \'BOT_ROLE="passive"\' >> /etc/warp-monitor.conf',
+            'systemctl enable --now bot-guard.timer',
+        ]
+        stop_self = True
+        new_primary = f"{PEER_NAME} ({PEER_IP})"
+    else:
+        peer_cmds = [
+            'sed -i \'s/^BOT_ROLE=.*/BOT_ROLE="passive"/\' /etc/warp-monitor.conf',
+            'grep -q \'^BOT_ROLE=\' /etc/warp-monitor.conf || echo \'BOT_ROLE="passive"\' >> /etc/warp-monitor.conf',
+            'systemctl enable --now bot-guard.timer',
+            'systemctl stop warp-bot.service >/dev/null 2>&1 || true',
+        ]
+        self_cmds = [
+            'sed -i \'s/^BOT_ROLE=.*/BOT_ROLE="active"/\' /etc/warp-monitor.conf',
+            'grep -q \'^BOT_ROLE=\' /etc/warp-monitor.conf || echo \'BOT_ROLE="active"\' >> /etc/warp-monitor.conf',
+            'systemctl disable --now bot-guard.timer >/dev/null 2>&1 || true',
+        ]
+        stop_self = False
+        new_primary = f"{SELF_NAME} ({SELF_IP})"
+
+    for c in peer_cmds:
+        peer_ssh(c, timeout=20)
+    for c in self_cmds:
+        sh(c, timeout=20)
+
+    if stop_self:
+        subprocess.Popen("sleep 2; systemctl stop warp-bot.service",
+                         shell=True, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL)
+        return (f"✅ Основной сервер переключён на {new_primary}.\n"
+                "Этот бот останавливается; дальше команды принимает новый основной.")
+    return f"✅ Основной сервер переключён на {new_primary}. Бот продолжает работать здесь."
+
+
 def main_kb():
     rows = [
         [{"text": "📊 Отчёт", "callback_data": "report"},
@@ -472,6 +544,7 @@ def main_kb():
     rows.append([{"text": "🌐 WARP", "callback_data": "warp"},
                  {"text": "📡 Ping", "callback_data": "ping"},
                  {"text": "🛡 ТСПУ", "callback_data": "tspu"}])
+    rows.append([{"text": "🔄 Сменить основной сервер", "callback_data": "switch"}])
     return {"inline_keyboard": rows}
 
 
@@ -601,7 +674,8 @@ def handle_message(msg):
              "/warp — состояние WARP\n"
              "/report — отчёт с графиком\n"
              "/tspu — проверка блокировки ТСПУ\n"
-             "/ping — задержка", back_kb())
+             "/ping — задержка\n"
+             "/switch — переключить основной сервер", back_kb())
     elif cmd == "/status":
         send(status_text(), main_kb())
     elif cmd.startswith("/") and cmd[1:] in [s["id"] for s in SERVERS]:
@@ -614,6 +688,14 @@ def handle_message(msg):
     elif cmd == "/tspu":
         send("🛡 Проверяю ТСПУ…")
         send(tspu_text(), back_kb())
+    elif cmd == "/switch":
+        send("🔄 Переключаю основной сервер…")
+        res = switch_primary()
+        send(res, main_kb())
+        if res.startswith("✅") and BOT_ROLE == "active":
+            subprocess.Popen("sleep 2; systemctl stop warp-bot.service",
+                             shell=True, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL)
     elif cmd == "/report":
         send("📊 Готовлю отчёт…")
         ok, err = run_report()
@@ -646,6 +728,14 @@ def handle_callback(cb):
         send("📊 Готовлю отчёт…")
         ok, err = run_report()
         send("✅ Отчёт отправлен." if ok else f"❌ Ошибка отчёта:\n<code>{err}</code>", main_kb())
+    elif data == "switch":
+        edit(mid, "🔄 Переключаю основной сервер…")
+        res = switch_primary()
+        edit(mid, res, main_kb())
+        if res.startswith("✅") and BOT_ROLE == "active":
+            subprocess.Popen("sleep 2; systemctl stop warp-bot.service",
+                             shell=True, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL)
     elif data == "menu":
         edit(mid, "🛰 <b>VPN Control</b>\nВыберите действие:", main_kb())
 
@@ -676,6 +766,7 @@ def main():
         {"command": "report", "description": "Отчёт с графиком"},
         {"command": "tspu", "description": "Проверка блокировки ТСПУ"},
         {"command": "ping", "description": "Задержка"},
+        {"command": "switch", "description": "Переключить основной сервер"},
     ]
     api("setMyCommands", commands=commands)
     if should_notify_start():
