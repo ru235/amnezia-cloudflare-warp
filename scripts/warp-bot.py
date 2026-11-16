@@ -796,7 +796,18 @@ def main():
     if should_notify_start():
         send("🤖 <b>VPN Control запущен</b>\nВыберите действие:", main_kb())
 
+    # Drain updates that piled up while no bot was polling. Without this a
+    # freshly-started bot re-processes the /switch callback handled by the
+    # previous server and flips the role straight back.
     offset = 0
+    try:
+        res = api("getUpdates", timeout=0)
+        if res.get("ok"):
+            for upd in res.get("result", []):
+                offset = upd["update_id"] + 1
+    except Exception:
+        pass
+
     while True:
         res = api("getUpdates", offset=offset, timeout=30,
                   allowed_updates=["message", "callback_query"])
