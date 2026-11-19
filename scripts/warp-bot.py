@@ -899,7 +899,10 @@ def main():
         res = api("getUpdates", offset=offset, timeout=30,
                   allowed_updates=["message", "callback_query"])
         if not res.get("ok"):
-            time.sleep(30 if res.get("error_code") == 409 else 5)
+            # A switch briefly leaves two pollers: the old bot stops a few
+            # seconds after the peer starts. Retry in 5 s instead of 30 s so
+            # the new primary is responsive right after the switch.
+            time.sleep(5)
             continue
         for upd in res.get("result", []):
             refresh_role()
