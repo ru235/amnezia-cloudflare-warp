@@ -43,6 +43,24 @@ PEER_NAME = CFG.get("PEER_NAME", "Peer")
 BOT_ROLE = CFG.get("BOT_ROLE", "active")
 CURRENT_UPDATE_ID = 0
 
+
+def refresh_role():
+    """Reload BOT_ROLE from the config file.
+
+    The passive guard can start this bot before a switch promotes the server,
+    and `systemctl enable --now` does not restart an already running process.
+    Without this reload the bot keeps the role it read at startup, so it shows
+    the wrong primary server and /switch takes the wrong branch.
+    """
+    global BOT_ROLE
+    role = load_env(CFG_PATH).get("BOT_ROLE", BOT_ROLE)
+    if role in ("active", "passive"):
+        if role != BOT_ROLE:
+            print(f"role reloaded: {BOT_ROLE} -> {role}", flush=True)
+        BOT_ROLE = role
+        CFG["BOT_ROLE"] = role
+
+
 SERVERS = []
 if CFG.get("SERVER1_IP"):
     SERVERS.append({"id": "s1", "name": CFG.get("SERVER1_NAME", "Server 1"),
@@ -491,6 +509,7 @@ def switch_primary():
     before calling retire_after_switch(), which enables the passive guard and
     stops this bot.
     """
+    global BOT_ROLE
     if not PEER_IP:
         return "❌ PEER_IP не задан — переключение невозможно."
     if not os.path.exists(KEY):
@@ -498,6 +517,10 @@ def switch_primary():
     if not tcp_ok(PEER_IP):
         return f"❌ Peer {PEER_NAME} ({PEER_IP}) недоступен по сети."
 
+    # The guard may have started this bot on a passive server, and a switch may
+    # have promoted the server without restarting the process. Read the role
+    # from the config instead of trusting the value loaded at startup.
+    refresh_role()
     self_active = (BOT_ROLE == "active")
 
     # A running guard would stop this bot as soon as it sees the peer's SSH
@@ -510,7 +533,14 @@ def switch_primary():
             'sed -i \'s/^BOT_ROLE=.*/BOT_ROLE="active"/\' /etc/warp-monitor.conf',
             'grep -q \'^BOT_ROLE=\' /etc/warp-monitor.conf || echo \'BOT_ROLE="active"\' >> /etc/warp-monitor.conf',
             'systemctl disable --now bot-guard.timer >/dev/null 2>&1 || true',
-            'systemctl enable --now warp-bot.service',
+            # Restart, not enable --now: the guard may already have the peer
+            # bot running with the old passive role, and enable --now would
+            # leave that process alive with a stale BOT_ROLE.
+            'systemctl enable warp-bot.service',
+            'systemctl restart warp-bot.service',
+            'for i in 1 2 3 4 5 6 7 8 9 10; do '
+            'systemctl is-active --quiet warp-bot.service && break; sleep 1; done',
+            'systemctl is-active --quiet warp-bot.service && echo BOT_ACTIVE || echo BOT_INACTIVE',
         ]
         # The guard must be enabled only after the final reply has been sent:
         # its first tick can stop this very bot within a second.
@@ -532,10 +562,12 @@ def switch_primary():
             'systemctl stop warp-bot.service >/dev/null 2>&1 || true',
         ]
         self_cmds = [
+            # Stop the guard first: a tick between the role change and this
+            # command would see the peer online and stop this bot mid-switch.
+            'systemctl disable --now bot-guard.timer >/dev/null 2>&1 || true',
             'sed -i \'s/^BOT_ROLE=.*/BOT_ROLE="active"/\' /etc/warp-monitor.conf',
             'grep -q \'^BOT_ROLE=\' /etc/warp-monitor.conf || echo \'BOT_ROLE="active"\' >> /etc/warp-monitor.conf',
             'systemctl enable --now warp-bot.service',
-            'systemctl disable --now bot-guard.timer >/dev/null 2>&1 || true',
         ]
         stop_self = False
         new_primary = f"{SELF_NAME} ({SELF_IP})"
@@ -546,7 +578,22 @@ def switch_primary():
     if "SWITCH_OK" not in out:
         return (f"❌ Не удалось выполнить команды на {PEER_NAME} ({PEER_IP}).\n"
                 "Роль не изменена, бот продолжает работать здесь.")
+    if self_active and "BOT_ACTIVE" not in out:
+        # The peer role was changed but its bot did not come up. Roll it back,
+        # otherwise this server goes passive and stops its bot while nobody
+        # polls Telegram on the other side.
+        peer_ssh(
+            'sed -i \'s/^BOT_ROLE=.*/BOT_ROLE="passive"/\' /etc/warp-monitor.conf; '
+            'systemctl disable warp-bot.service >/dev/null 2>&1 || true; '
+            'systemctl stop warp-bot.service >/dev/null 2>&1 || true; '
+            'systemctl enable --now bot-guard.timer >/dev/null 2>&1 || true',
+            timeout=30)
+        return (f"❌ {PEER_NAME} ({PEER_IP}): бот не запустился. "
+                "Роль не изменена, бот продолжает работать здесь.")
     sh("; ".join(self_cmds), timeout=30)
+    # Pick up the role self_cmds just wrote. A guard-started passive process
+    # must immediately start acting as active (or vice versa before it stops).
+    refresh_role()
 
     if stop_self:
         return (f"✅ Основной сервер переключён на {new_primary}.\n"
@@ -754,9 +801,11 @@ def handle_message(msg):
     elif cmd == "/switch":
         sent = send("🔄 Переключаю основной сервер…")
         mid = (sent.get("result") or {}).get("message_id")
+        refresh_role()
         was_active = (BOT_ROLE == "active")
         confirm_current_update()
         res = switch_primary()
+        print(f"switch result (role={BOT_ROLE}): {res}", flush=True)
         if not mid or not edit(mid, res, main_kb()).get("ok"):
             send(res, main_kb())
         if was_active and res.startswith("✅"):
@@ -795,9 +844,11 @@ def handle_callback(cb):
         send("✅ Отчёт отправлен." if ok else f"❌ Ошибка отчёта:\n<code>{err}</code>", main_kb())
     elif data == "switch":
         edit(mid, "🔄 Переключаю основной сервер…")
+        refresh_role()
         was_active = (BOT_ROLE == "active")
         confirm_current_update()
         res = switch_primary()
+        print(f"switch result (role={BOT_ROLE}): {res}", flush=True)
         if not edit(mid, res, main_kb()).get("ok"):
             send(res, main_kb())
         if was_active and res.startswith("✅"):
@@ -851,12 +902,14 @@ def main():
             time.sleep(30 if res.get("error_code") == 409 else 5)
             continue
         for upd in res.get("result", []):
+            refresh_role()
             offset = upd["update_id"] + 1
             CURRENT_UPDATE_ID = upd["update_id"]
             kind = "message" if "message" in upd else "callback_query"
             payload = ((upd.get("message") or {}).get("text")
                        or (upd.get("callback_query") or {}).get("data") or "")
-            print(f"update {upd['update_id']} {kind} {payload!r}", flush=True)
+            print(f"update {upd['update_id']} {kind} {payload!r} role={BOT_ROLE}",
+                  flush=True)
             try:
                 if "message" in upd:
                     handle_message(upd["message"])
