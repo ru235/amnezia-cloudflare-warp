@@ -44,6 +44,24 @@ fi
 # internet. Detect WARP's current priority and put our rule above it.
 WARP_TABLE="${WARP_TABLE:-65743}"
 
+# WARP bypasses exactly its own mark, e.g.
+#   1: not from all fwmark 0x100cf lookup 65743
+# Any other mark is caught by that rule and sent into the WARP table, so our
+# bypass route is never used (this broke AWG handshakes on a host where an old
+# config still said BYPASS_MARK="0x1"). Detect the real mark and use it even if
+# the config is stale.
+warp_mark=$(ip rule show 2>/dev/null | awk -v table="$WARP_TABLE" '
+    $1 ~ /^[0-9]+:$/ {
+        for (i = 2; i <= NF; i++)
+            if ($i == "fwmark" && $(i+2) == "lookup" && $(i+3) == table) {
+                print $(i+1); exit
+            }
+    }')
+if [ -n "$warp_mark" ] && [ "$warp_mark" != "$BYPASS_MARK" ]; then
+    echo "warning: BYPASS_MARK=$BYPASS_MARK differs from WARP mark $warp_mark; using $warp_mark" >&2
+    BYPASS_MARK="$warp_mark"
+fi
+
 rule_prios() {  # rule_prios ""|-6 -> priorities of our bypass rules
     local family="$1"
     ip $family rule show 2>/dev/null | awk -v mark="$BYPASS_MARK" '
@@ -100,6 +118,21 @@ add_rule() {  # add_rule <table> <chain> <args...>
     shift 2
     iptables -t "$table" -C "$chain" "$@" 2>/dev/null || iptables -t "$table" -I "$chain" 1 "$@"
 }
+
+managed_mark_rules() {
+    iptables -t mangle -S 2>/dev/null | grep -E \
+        '^-A (PREROUTING -m conntrack --ctstate DNAT|PREROUTING -i amn0 -p udp -m udp --sport [0-9]+|OUTPUT -p tcp -m tcp --sport (22|80|443)|OUTPUT -p udp -m udp --sport 443|OUTPUT -p icmp -m icmp --icmp-type 0) -j MARK '
+}
+
+# A rule with an old mark (e.g. 0x1) would match after the new one and overwrite
+# it. Drop all managed rules, then add them back with the detected mark below.
+if managed_mark_rules | grep -vq -- "--set-xmark ${BYPASS_MARK}/0xffffffff"; then
+    while IFS= read -r line; do
+        read -r -a argv <<< "$line"
+        argv[0]="-D"
+        iptables -t mangle "${argv[@]}" 2>/dev/null || true
+    done < <(managed_mark_rules)
+fi
 
 # 1. The AWG transport itself must leave via the physical uplink
 add_rule mangle PREROUTING -i amn0 -p udp --sport "$AWG_PORT" -j MARK --set-mark "$BYPASS_MARK"
